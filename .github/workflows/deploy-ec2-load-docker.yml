@@ -40,8 +40,8 @@ jobs:
             - name: Checkout sgx-github-actions workflow repository
               uses: actions/checkout@v4
               with:
-                  repository: ${{ github.action_repository || github.repository }}
-                  ref: ${{ github.action_ref || github.ref }}
+                  repository: Ennovative-Genix/sgx-github-actions
+                  ref: main
                   sparse-checkout: .github/scripts
                   sparse-checkout-cone-mode: false
                   path: workflow-repo
