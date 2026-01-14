@@ -1,5 +1,9 @@
 name: Build and Deploy UI (Angular)
 
+permissions:
+  id-token: write
+  contents: read
+
 on:
   workflow_call:
     inputs:
@@ -22,7 +26,6 @@ on:
       EC2_INSTANCE_ID:
         description: "Target EC2 Instance ID"
         required: true
-
 jobs:
   pre-build:
     name: Pre-Build Cleanup
