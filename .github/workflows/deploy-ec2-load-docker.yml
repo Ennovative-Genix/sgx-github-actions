@@ -1,0 +1,79 @@
+name: Load Docker Image to EC2 from S3
+
+on:
+    workflow_call:
+        inputs:
+            environment:
+                description: "Target environment (dev, uat, prod)"
+                required: true
+                type: string
+            docker_image_name:
+                description: "Docker image name"
+                required: true
+                type: string
+            s3_path:
+                description: "S3 path prefix for downloads"
+                required: true
+                type: string
+        secrets:
+            IAM_ROLE_ARN:
+                description: "AWS IAM Role ARN for OIDC authentication"
+                required: true
+            EC2_INSTANCE_ID:
+                description: "Target EC2 Instance ID"
+                required: true
+
+jobs:
+    load-docker-image:
+        name: Load Docker Image to EC2
+        runs-on: ubuntu-latest
+        environment: ${{ inputs.environment }}
+        permissions:
+            id-token: write
+            contents: read
+
+        env:
+            IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+            EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+            AWS_REGION: ${{ vars.AWS_REGION }}
+            S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.ref }}
+
+            - name: Make poll-ssm-command.sh executable
+              run: chmod +x .github/scripts/poll-ssm-command.sh
+
+            - name: Configure AWS credentials (OIDC)
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: ${{ env.IAM_ROLE_ARN }}
+                  aws-region: ${{ env.AWS_REGION }}
+                  role-session-name: GitHubActions-EC2-Load-Docker-${{ github.run_id }}
+
+            - name: Copy Docker Image from S3 to EC2 Instance (via SSM)
+              run: |
+                  COMMAND_ID=$(aws ssm send-command \
+                    --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+                    --document-name "AWS-RunShellScript" \
+                    --parameters '{"commands":["aws s3 cp s3://'${{ env.S3_BUILD_BUCKET }}'/${{ inputs.s3_path }}/latest.tar.gz /var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz --region '${{ env.AWS_REGION }}'"]}' \
+                    --region ${{ env.AWS_REGION }} \
+                    --query 'Command.CommandId' \
+                    --output text)
+
+                  .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy Docker Image from S3"
+
+            - name: Load Docker image into Docker on EC2
+              run: |
+                  COMMAND_ID=$(aws ssm send-command \
+                    --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+                    --document-name "AWS-RunShellScript" \
+                    --parameters '{"commands":["ls -lh /var/tmp/","gunzip -c /var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz | docker load"]}' \
+                    --region ${{ env.AWS_REGION }} \
+                    --query 'Command.CommandId' \
+                    --output text)
+
+                  .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Load Docker Image"

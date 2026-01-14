@@ -1,0 +1,36 @@
+name: Test project
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to use"
+        required: false
+        type: string
+        default: "20.x"
+      run_tests:
+        description: "Whether to run test cases"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        if: ${{ inputs.run_tests }}
+        run: npm run test --if-present

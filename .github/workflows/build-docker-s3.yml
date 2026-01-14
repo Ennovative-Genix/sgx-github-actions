@@ -1,0 +1,91 @@
+name: Build Angular, Docker Image and Upload to S3
+
+on:
+    workflow_call:
+        inputs:
+            environment:
+                description: "Target environment (dev, uat, prod)"
+                required: true
+                type: string
+            node_version:
+                description: "Node.js version to use"
+                required: false
+                type: string
+                default: "20.x"
+            docker_image_name:
+                description: "Docker image name"
+                required: true
+                type: string
+            s3_path:
+                description: "S3 path prefix for uploads"
+                required: true
+                type: string
+        secrets:
+            IAM_ROLE_ARN:
+                description: "AWS IAM Role ARN for OIDC authentication"
+                required: true
+
+jobs:
+    build-docker-upload:
+        name: Build, Docker and Upload to S3
+        runs-on: ubuntu-latest
+        environment: ${{ inputs.environment }}
+        env:
+            IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+            AWS_REGION: ${{ vars.AWS_REGION }}
+            S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
+            TARGET_ENV: ${{ inputs.environment }}
+
+        permissions:
+            id-token: write
+            contents: read
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.ref }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ inputs.node_version }}
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm install
+
+            - name: Build Angular Project
+              run: |
+                  if [[ "${{ env.TARGET_ENV }}" == "uat" ]]; then
+                    npm run build:uat
+                  elif [[ "${{ env.TARGET_ENV }}" == "prod" ]]; then
+                    npm run build:prod
+                  else
+                    npm run build:dev
+                  fi
+
+            - name: Docker build
+              run: |
+                  docker build -f Dockerfile -t ${{ inputs.docker_image_name }}:latest .
+                  echo "Docker image ${{ inputs.docker_image_name }}:latest built"
+
+            - name: Save Docker image to tarball
+              run: |
+                  docker save ${{ inputs.docker_image_name }}:latest | gzip > ${{ inputs.docker_image_name }}-latest.tar.gz
+                  ls -lh ${{ inputs.docker_image_name }}-latest.tar.gz
+
+            - name: Configure AWS Credentials (OIDC)
+              uses: aws-actions/configure-aws-credentials@v4
+              with:
+                  role-to-assume: ${{ env.IAM_ROLE_ARN }}
+                  aws-region: ${{ env.AWS_REGION }}
+                  role-session-name: GitHubActions-Build-Upload-${{ github.run_id }}
+
+            - name: Upload "latest" to S3 (STANDARD)
+              run: |
+                  aws s3 cp ${{ inputs.docker_image_name }}-latest.tar.gz s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/latest.tar.gz --region ${{ env.AWS_REGION }} --storage-class STANDARD
+
+            - name: Upload "sha" to S3 (GLACIER_IR)
+              run: |
+                  aws s3 cp ${{ inputs.docker_image_name }}-latest.tar.gz s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/${{ github.sha }}.tar.gz --region ${{ env.AWS_REGION }} --storage-class GLACIER_IR

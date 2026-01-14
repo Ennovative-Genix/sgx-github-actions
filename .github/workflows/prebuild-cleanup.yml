@@ -1,0 +1,35 @@
+name: Pre-Build (Cleanup)
+
+on:
+    workflow_call:
+
+jobs:
+    pre-build:
+        name: Pre-Build
+        runs-on: ubuntu-latest
+        steps:
+            - name: Free up disk space
+              run: |
+                  echo "=== Initial disk usage ==="
+                  df -h
+                  echo ""
+                  echo "=== Removing unnecessary packages and tools ==="
+                  sudo rm -rf /usr/share/dotnet
+                  sudo rm -rf /usr/local/lib/android
+                  sudo rm -rf /opt/ghc
+                  sudo rm -rf /opt/hostedtoolcache/CodeQL
+                  sudo rm -rf /usr/local/share/boost
+                  sudo rm -rf /usr/share/swift
+                  sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+                  echo ""
+                  echo "=== Cleaning apt cache ==="
+                  sudo apt-get clean
+                  echo ""
+                  echo "=== Pruning Docker ==="
+                  docker system prune -a -f --volumes
+                  docker builder prune -a -f
+
+            - name: Check disk usage after pre-build
+              run: |
+                  df -h
+                  docker system df
