@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_REGION: ap-south-1
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       PORT_MAPPING: ${{ vars.PORT_MAPPING }}

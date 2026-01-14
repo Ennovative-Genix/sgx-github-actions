@@ -33,7 +33,7 @@ jobs:
         env:
             IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
             EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-            AWS_REGION: ${{ vars.AWS_REGION }}
+            AWS_REGION: ap-south-1
             S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
 
         steps:

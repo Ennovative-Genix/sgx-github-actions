@@ -30,7 +30,7 @@ jobs:
     environment: ${{ inputs.environment }}
     env:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_REGION: ap-south-1
       S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
       TARGET_ENV: ${{ inputs.environment }}
 
