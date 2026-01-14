@@ -1,0 +1,34 @@
+name: Deploy UI (Caller Example)
+
+# This is an example workflow showing how to call the reusable deploy.yml workflow
+# You can trigger this manually or customize triggers as needed
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+        default: "dev"
+      ref:
+        description: "Git ref to deploy (branch, tag, or SHA)"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ inputs.environment }}
+      ref: ${{ inputs.ref }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
