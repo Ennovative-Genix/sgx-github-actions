@@ -37,6 +37,9 @@ jobs:
       S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Checkout sgx-github-actions workflow repository
         uses: actions/checkout@v4
         with:
@@ -45,9 +48,6 @@ jobs:
           sparse-checkout: .github/scripts
           sparse-checkout-cone-mode: false
           path: workflow-repo
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: List files in repository
         run: ls -la .
