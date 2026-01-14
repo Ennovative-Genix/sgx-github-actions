@@ -34,13 +34,20 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout repository
+      - name: Checkout sgx-github-actions workflow repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          repository: ${{ github.action_repository || github.repository }}
+          ref: ${{ github.action_ref || github.ref }}
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+          path: workflow-repo
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Make poll-ssm-command.sh executable
-        run: chmod +x .github/scripts/poll-ssm-command.sh
+        run: chmod +x workflow-repo/.github/scripts/poll-ssm-command.sh
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -61,7 +68,7 @@ jobs:
             --query 'Command.CommandId' \
             --output text)
 
-          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy docker-compose.yml"
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy docker-compose.yml"
 
       - name: Stop existing Docker container
         run: |
@@ -73,7 +80,7 @@ jobs:
             --query 'Command.CommandId' \
             --output text)
 
-          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Stop Docker Container"
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Stop Docker Container"
 
       - name: Start Docker container
         run: |
@@ -85,7 +92,7 @@ jobs:
             --query 'Command.CommandId' \
             --output text)
 
-          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Start Docker Container"
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Start Docker Container"
 
       - name: Clean up tar file
         run: |
@@ -97,4 +104,4 @@ jobs:
             --query 'Command.CommandId' \
             --output text)
 
-          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Clean up files"
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Clean up files"
