@@ -1,5 +1,3 @@
-name: Load Docker Image to EC2 from S3
-
 on:
     workflow_call:
         inputs:
@@ -25,7 +23,7 @@ on:
 
 jobs:
     load-docker-image:
-        name: Load Docker Image to EC2
+        name: Load Docker Image to EC2 from S3
         runs-on: ubuntu-latest
         environment: ${{ inputs.environment }}
         permissions:

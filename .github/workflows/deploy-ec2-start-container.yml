@@ -1,102 +1,100 @@
-name: Start Docker Container on EC2
-
 on:
-    workflow_call:
-        inputs:
-            environment:
-                description: "Target environment (dev, uat, prod)"
-                required: true
-                type: string
-            docker_image_name:
-                description: "Docker image name (for cleanup)"
-                required: true
-                type: string
-        secrets:
-            IAM_ROLE_ARN:
-                description: "AWS IAM Role ARN for OIDC authentication"
-                required: true
-            EC2_INSTANCE_ID:
-                description: "Target EC2 Instance ID"
-                required: true
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, uat, prod)"
+        required: true
+        type: string
+      docker_image_name:
+        description: "Docker image name (for cleanup)"
+        required: true
+        type: string
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication"
+        required: true
+      EC2_INSTANCE_ID:
+        description: "Target EC2 Instance ID"
+        required: true
 
 jobs:
-    start-container:
-        name: Start Docker Container on EC2
-        runs-on: ubuntu-latest
-        environment: ${{ inputs.environment }}
-        env:
-            AWS_REGION: ${{ vars.AWS_REGION }}
-            EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-            IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-            PORT_MAPPING: ${{ vars.PORT_MAPPING }}
-            CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
-            CLOUDWATCH_LOG_STREAM: ${{ vars.CLOUDWATCH_LOG_STREAM }}
-        permissions:
-            id-token: write
-            contents: read
+  start-container:
+    name: Start Docker Container on EC2
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      PORT_MAPPING: ${{ vars.PORT_MAPPING }}
+      CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
+      CLOUDWATCH_LOG_STREAM: ${{ vars.CLOUDWATCH_LOG_STREAM }}
+    permissions:
+      id-token: write
+      contents: read
 
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@v4
-              with:
-                  ref: ${{ github.ref }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
 
-            - name: Make poll-ssm-command.sh executable
-              run: chmod +x .github/scripts/poll-ssm-command.sh
+      - name: Make poll-ssm-command.sh executable
+        run: chmod +x .github/scripts/poll-ssm-command.sh
 
-            - name: Configure AWS Credentials
-              uses: aws-actions/configure-aws-credentials@v4
-              with:
-                  role-to-assume: ${{ env.IAM_ROLE_ARN }}
-                  aws-region: ${{ env.AWS_REGION }}
-                  role-session-name: GitHubActions-EC2-Start-Container-${{ github.run_id }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-EC2-Start-Container-${{ github.run_id }}
 
-            - name: Copy docker-compose.yml to EC2 Instance
-              run: |
-                  COMPOSE_CONTENT=$(cat docker-compose.yml | base64 | tr -d '\n')
-                  COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/docker-compose.yml"
-                  COMMAND_ID=$(aws ssm send-command \
-                    --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-                    --document-name "AWS-RunShellScript" \
-                    --parameters "{\"commands\":[\"$COMMAND\"]}" \
-                    --region ${{ env.AWS_REGION }} \
-                    --query 'Command.CommandId' \
-                    --output text)
+      - name: Copy docker-compose.yml to EC2 Instance
+        run: |
+          COMPOSE_CONTENT=$(cat docker-compose.yml | base64 | tr -d '\n')
+          COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/docker-compose.yml"
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters "{\"commands\":[\"$COMMAND\"]}" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
 
-                  .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy docker-compose.yml"
+          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy docker-compose.yml"
 
-            - name: Stop existing Docker container
-              run: |
-                  COMMAND_ID=$(aws ssm send-command \
-                    --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-                    --document-name "AWS-RunShellScript" \
-                    --parameters '{"commands":["cd /var/tmp && docker compose down || true"]}' \
-                    --region ${{ env.AWS_REGION }} \
-                    --query 'Command.CommandId' \
-                    --output text)
+      - name: Stop existing Docker container
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":["cd /var/tmp && docker compose down || true"]}' \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
 
-                  .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Stop Docker Container"
+          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Stop Docker Container"
 
-            - name: Start Docker container
-              run: |
-                  COMMAND_ID=$(aws ssm send-command \
-                    --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-                    --document-name "AWS-RunShellScript" \
-                    --parameters '{"commands":["cd /var/tmp && PORT_MAPPING=${{ env.PORT_MAPPING }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${{ env.CLOUDWATCH_LOG_GROUP }} CLOUDWATCH_LOG_STREAM=${{ env.CLOUDWATCH_LOG_STREAM }} docker compose up -d"]}' \
-                    --region ${{ env.AWS_REGION }} \
-                    --query 'Command.CommandId' \
-                    --output text)
+      - name: Start Docker container
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":["cd /var/tmp && PORT_MAPPING=${{ env.PORT_MAPPING }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${{ env.CLOUDWATCH_LOG_GROUP }} CLOUDWATCH_LOG_STREAM=${{ env.CLOUDWATCH_LOG_STREAM }} docker compose up -d"]}' \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
 
-                  .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Start Docker Container"
+          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Start Docker Container"
 
-            - name: Clean up tar file
-              run: |
-                  COMMAND_ID=$(aws ssm send-command \
-                    --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-                    --document-name "AWS-RunShellScript" \
-                    --parameters '{"commands":["rm -f /var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz || true"]}' \
-                    --region ${{ env.AWS_REGION }} \
-                    --query 'Command.CommandId' \
-                    --output text)
+      - name: Clean up tar file
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":["rm -f /var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz || true"]}' \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
 
-                  .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Clean up files"
+          .github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Clean up files"

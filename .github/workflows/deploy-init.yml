@@ -1,5 +1,3 @@
-name: Build and Deploy UI (Angular)
-
 permissions:
   id-token: write
   contents: read
@@ -27,13 +25,13 @@ on:
         description: "Target EC2 Instance ID"
         required: true
 jobs:
-  pre-build:
+  pre-build-cleanup:
     name: Pre-Build Cleanup
     uses: ./.github/workflows/prebuild-cleanup.yml
 
   build-and-upload:
     name: Build and Upload to S3
-    needs: pre-build
+    needs: pre-build-cleanup
     uses: ./.github/workflows/build-docker-s3.yml
     with:
       environment: ${{ inputs.environment }}

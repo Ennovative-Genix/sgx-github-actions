@@ -1,11 +1,9 @@
-name: Pre-Build (Cleanup)
-
 on:
     workflow_call:
 
 jobs:
     pre-build:
-        name: Pre-Build
+        name: Pre-Build (Cleanup)
         runs-on: ubuntu-latest
         steps:
             - name: Free up disk space
