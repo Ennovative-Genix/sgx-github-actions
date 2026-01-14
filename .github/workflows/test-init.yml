@@ -1,0 +1,54 @@
+on:
+  workflow_call:
+    inputs:
+      framework:
+        description: "Framework under test (e.g., angular)"
+        required: false
+        type: string
+        default: "angular"
+      node_version:
+        description: "Node.js version to use"
+        required: false
+        type: string
+        default: "20.x"
+      run_tests:
+        description: "Whether to run test cases"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-framework:
+    name: Validate requested framework
+    runs-on: ubuntu-latest
+    outputs:
+      framework: ${{ steps.set-framework.outputs.framework }}
+    steps:
+      - id: set-framework
+        run: |
+          FRAMEWORK="${{ inputs.framework }}"
+          if [ -z "$FRAMEWORK" ]; then
+            FRAMEWORK="angular"
+          fi
+
+          case "$FRAMEWORK" in
+            angular)
+              echo "framework=$FRAMEWORK" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported framework: $FRAMEWORK" >&2
+              exit 1
+              ;;
+          esac
+
+  angular-tests:
+    name: Angular tests
+    needs: validate-framework
+    if: ${{ needs.validate-framework.outputs.framework == 'angular' }}
+    uses: ./.github/workflows/test-angular.yml
+    with:
+      node_version: ${{ inputs.node_version }}
+      run_tests: ${{ inputs.run_tests }}
