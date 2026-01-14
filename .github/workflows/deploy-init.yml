@@ -26,24 +26,24 @@ on:
         required: true
 
 jobs:
-  pre-build-cleanup:
-    name: Pre-Build Cleanup
-    uses: ./.github/workflows/prebuild-cleanup.yml
+  # pre-build-cleanup:
+  #   name: Pre-Build Cleanup
+  #   uses: ./.github/workflows/prebuild-cleanup.yml
 
-  build-and-upload:
-    name: Build and Upload to S3
-    needs: pre-build-cleanup
-    uses: ./.github/workflows/build-docker-s3.yml
-    with:
-      environment: ${{ inputs.environment }}
-      docker_image_name: ${{ inputs.docker_image_name }}
-      s3_path: ${{ inputs.s3_path }}
-    secrets:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+  # build-and-upload:
+  #   name: Build and Upload to S3
+  #   needs: pre-build-cleanup
+  #   uses: ./.github/workflows/build-docker-s3.yml
+  #   with:
+  #     environment: ${{ inputs.environment }}
+  #     docker_image_name: ${{ inputs.docker_image_name }}
+  #     s3_path: ${{ inputs.s3_path }}
+  #   secrets:
+  #     IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
   load-docker-image:
     name: Load Docker to EC2
-    needs: build-and-upload
+    # needs: build-and-upload
     uses: ./.github/workflows/deploy-ec2-load-docker.yml
     with:
       environment: ${{ inputs.environment }}
