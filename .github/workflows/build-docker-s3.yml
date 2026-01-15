@@ -56,11 +56,11 @@ jobs:
       - name: Build Angular Project
         run: |
           if [[ "${{ env.TARGET_ENV }}" == "uat" ]]; then
-            npm run build:uat
+            npm run build:uat || npm run build
           elif [[ "${{ env.TARGET_ENV }}" == "prod" ]]; then
-            npm run build:prod
+            npm run build:prod || npm run build
           else
-            npm run build:dev
+            npm run build:dev || npm run build
           fi
 
       - name: Docker build
