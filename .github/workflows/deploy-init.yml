@@ -5,6 +5,11 @@ permissions:
 on:
   workflow_call:
     inputs:
+      aws_secrets_arn:
+        description: "AWS Secrets Manager ARN"
+        required: false
+        type: string
+        default: ""
       environment:
         description: "Target environment (dev, uat, prod)"
         required: true
@@ -58,6 +63,7 @@ jobs:
     needs: load-docker-image
     uses: ./.github/workflows/deploy-ec2-start-container.yml
     with:
+      aws_secrets_arn: ${{ inputs.aws_secrets_arn }}
       environment: ${{ inputs.environment }}
       docker_image_name: ${{ inputs.docker_image_name }}
     secrets:

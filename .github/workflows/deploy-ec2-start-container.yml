@@ -1,6 +1,11 @@
 on:
   workflow_call:
     inputs:
+      aws_secrets_arn:
+        description: "AWS Secrets Manager ARN"
+        required: false
+        type: string
+        default: ""
       environment:
         description: "Target environment (dev, uat, prod)"
         required: true
@@ -55,6 +60,31 @@ jobs:
           role-to-assume: ${{ env.IAM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-EC2-Start-Container-${{ github.run_id }}
+
+      - name: Fetch .env from AWS Secrets Manager
+        if: ${{ inputs.aws_secrets_arn != '' }}
+        run: |
+          aws secretsmanager get-secret-value \
+            --secret-id ${{ inputs.aws_secrets_arn }} \
+            --region ap-south-1 \
+            --query 'SecretString' \
+            --output text > .env
+          echo ".env file fetched from AWS Secrets Manager"
+
+      - name: Copy .env to EC2 Instance
+        if: ${{ inputs.aws_secrets_arn != '' }}
+        run: |
+          ENV_CONTENT=$(cat .env | base64 | tr -d '\n')
+          COMMAND="echo $ENV_CONTENT | base64 -d > /var/tmp/.env"
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters "{\"commands\":[\"$COMMAND\"]}" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy .env to EC2 Instance"
 
       - name: Copy docker-compose.yml to EC2 Instance
         run: |
