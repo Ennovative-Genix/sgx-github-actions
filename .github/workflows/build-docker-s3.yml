@@ -25,7 +25,7 @@ on:
 
 jobs:
   build-docker-upload:
-    name: Build Angular, Docker Image and Upload to S3
+    name: Build Project, Docker Image and Upload to S3
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
@@ -53,7 +53,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Angular Project
+      - name: Build Project
         run: |
           if [[ "${{ env.TARGET_ENV }}" == "uat" ]]; then
             npm run build:uat || npm run build
