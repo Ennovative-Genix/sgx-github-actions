@@ -49,12 +49,6 @@ jobs:
           sparse-checkout-cone-mode: false
           path: workflow-repo
 
-      - name: List files in repository
-        run: ls -la .
-
-      - name: List files in workflow-repo
-        run: ls -la workflow-repo
-
       - name: Make poll-ssm-command.sh executable
         run: chmod +x workflow-repo/.github/scripts/poll-ssm-command.sh
 
