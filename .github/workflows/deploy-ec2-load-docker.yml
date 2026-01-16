@@ -61,11 +61,15 @@ jobs:
 
       - name: Copy Docker Image from S3 to EC2 Instance (via SSM)
         run: |
+          S3_SOURCE="s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/latest.tar.gz"
+          DEST_PATH="/var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz"
+          SSM_COMMAND="aws s3 cp ${S3_SOURCE} ${DEST_PATH} --region ${{ env.AWS_REGION }}"
+
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["aws s3 cp s3://'${{ env.S3_BUILD_BUCKET }}'/${{ inputs.s3_path }}/latest.tar.gz /var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz --region '${{ env.AWS_REGION }}'"]}' \
-            --region ${{ env.AWS_REGION }} \
+            --parameters "{\"commands\":[\"${SSM_COMMAND}\"]}" \
+            --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
             --output text)
 
@@ -73,11 +77,13 @@ jobs:
 
       - name: Load Docker image into Docker on EC2
         run: |
+          TAR_FILE="/var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz"
+
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["ls -lh /var/tmp/","gunzip -c /var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz | docker load"]}' \
-            --region ${{ env.AWS_REGION }} \
+            --parameters "{\"commands\":[\"ls -lh /var/tmp/\",\"gunzip -c ${TAR_FILE} | docker load\"]}" \
+            --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
             --output text)
 
