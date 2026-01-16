@@ -16,6 +16,9 @@ on:
       EC2_INSTANCE_ID:
         description: "Target EC2 Instance ID"
         required: true
+      AWS_SECRETS_ARN:
+        description: "AWS Secrets Manager ARN"
+        required: false
 
 jobs:
   start-container:
