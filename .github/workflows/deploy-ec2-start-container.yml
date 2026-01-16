@@ -1,11 +1,6 @@
 on:
   workflow_call:
     inputs:
-      aws_secrets_arn:
-        description: "AWS Secrets Manager ARN"
-        required: false
-        type: string
-        default: ""
       environment:
         description: "Target environment (dev, uat, prod)"
         required: true
@@ -34,6 +29,7 @@ jobs:
       PORT_MAPPING: ${{ vars.PORT_MAPPING }}
       CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
       CLOUDWATCH_LOG_STREAM: ${{ vars.CLOUDWATCH_LOG_STREAM }}
+      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
     permissions:
       id-token: write
       contents: read
@@ -62,17 +58,17 @@ jobs:
           role-session-name: GitHubActions-EC2-Start-Container-${{ github.run_id }}
 
       - name: Fetch .env from AWS Secrets Manager
-        if: ${{ inputs.aws_secrets_arn != '' }}
+        if: ${{ env.AWS_SECRETS_ARN != '' }}
         run: |
           aws secretsmanager get-secret-value \
-            --secret-id ${{ inputs.aws_secrets_arn }} \
+            --secret-id ${{ env.AWS_SECRETS_ARN }} \
             --region ap-south-1 \
             --query 'SecretString' \
             --output text > .env
           echo ".env file fetched from AWS Secrets Manager"
 
       - name: Copy .env to EC2 Instance
-        if: ${{ inputs.aws_secrets_arn != '' }}
+        if: ${{ env.AWS_SECRETS_ARN != '' }}
         run: |
           ENV_CONTENT=$(cat .env | base64 | tr -d '\n')
           COMMAND="echo $ENV_CONTENT | base64 -d > /var/tmp/.env"
