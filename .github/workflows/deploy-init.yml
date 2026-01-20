@@ -17,6 +17,11 @@ on:
         description: "S3 path prefix for uploads/downloads"
         required: true
         type: string
+      app_path:
+        description: "Path to the application directory (relative to repo root). Defaults to root."
+        required: false
+        type: string
+        default: "."
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -40,6 +45,7 @@ jobs:
       environment: ${{ inputs.environment }}
       docker_image_name: ${{ inputs.docker_image_name }}
       s3_path: ${{ inputs.s3_path }}
+      app_path: ${{ inputs.app_path }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 

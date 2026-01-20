@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: true
+      app_path:
+        description: "Path to the application directory (relative to repo root). Defaults to root."
+        required: false
+        type: string
+        default: "."
 
 permissions:
   contents: read
@@ -52,3 +57,4 @@ jobs:
     with:
       node_version: ${{ inputs.node_version }}
       run_tests: ${{ inputs.run_tests }}
+      app_path: ${{ inputs.app_path }}

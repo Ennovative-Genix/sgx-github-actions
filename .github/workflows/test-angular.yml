@@ -11,11 +11,18 @@ on:
         required: false
         type: boolean
         default: true
+      app_path:
+        description: "Path to the application directory (relative to repo root). Defaults to root."
+        required: false
+        type: string
+        default: "."
 
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      APP_PATH: ${{ inputs.app_path }}
 
     steps:
       - name: Checkout repository
@@ -25,10 +32,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
+          cache: "npm"
+          cache-dependency-path: ${{ inputs.app_path }}/package-lock.json
 
       - name: Install dependencies
+        working-directory: ${{ env.APP_PATH }}
         run: npm install
 
       - name: Run tests
         if: ${{ inputs.run_tests }}
+        working-directory: ${{ env.APP_PATH }}
         run: npm run test --if-present

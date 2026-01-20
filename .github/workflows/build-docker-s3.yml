@@ -18,6 +18,11 @@ on:
         description: "S3 path prefix for uploads"
         required: true
         type: string
+      app_path:
+        description: "Path to the application directory (relative to repo root). Defaults to root."
+        required: false
+        type: string
+        default: "."
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -33,6 +38,7 @@ jobs:
       AWS_REGION: ap-south-1
       S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
       TARGET_ENV: ${{ inputs.environment }}
+      APP_PATH: ${{ inputs.app_path }}
 
     permissions:
       id-token: write
@@ -49,11 +55,14 @@ jobs:
         with:
           node-version: ${{ inputs.node_version }}
           cache: "npm"
+          cache-dependency-path: ${{ env.APP_PATH }}/package-lock.json
 
       - name: Install dependencies
+        working-directory: ${{ env.APP_PATH }}
         run: npm install
 
       - name: Build Project
+        working-directory: ${{ env.APP_PATH }}
         run: |
           if [[ "${{ env.TARGET_ENV }}" == "uat" ]]; then
             npm run build:uat || npm run build
@@ -64,6 +73,7 @@ jobs:
           fi
 
       - name: Docker build
+        working-directory: ${{ env.APP_PATH }}
         run: |
           docker build -f Dockerfile -t ${{ inputs.docker_image_name }}:latest .
           echo "Docker image ${{ inputs.docker_image_name }}:latest built"

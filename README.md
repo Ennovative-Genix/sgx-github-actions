@@ -24,6 +24,7 @@ jobs:
       environment: dev # dev, uat, or prod
       docker_image_name: my-app
       s3_path: my-app/builds
+      app_path: packages/backend # Optional - path to app if not in repo root
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
@@ -32,11 +33,12 @@ jobs:
 
 **Inputs:**
 
-| Name                | Required | Description                               |
-| ------------------- | -------- | ----------------------------------------- |
-| `environment`       | Yes      | Target environment (`dev`, `uat`, `prod`) |
-| `docker_image_name` | Yes      | Docker image name                         |
-| `s3_path`           | Yes      | S3 path prefix for uploads/downloads      |
+| Name                | Required | Default | Description                                              |
+| ------------------- | -------- | ------- | -------------------------------------------------------- |
+| `environment`       | Yes      | -       | Target environment (`dev`, `uat`, `prod`)                |
+| `docker_image_name` | Yes      | -       | Docker image name                                        |
+| `s3_path`           | Yes      | -       | S3 path prefix for uploads/downloads                     |
+| `app_path`          | No       | `.`     | Path to application directory (relative to repo root)   |
 
 **Secrets:**
 
@@ -75,15 +77,17 @@ jobs:
       framework: angular
       node_version: "20.x"
       run_tests: true
+      app_path: packages/frontend # Optional - path to app if not in repo root
 ```
 
 **Inputs:**
 
-| Name           | Required | Default   | Description               |
-| -------------- | -------- | --------- | ------------------------- |
-| `framework`    | No       | `angular` | Framework under test      |
-| `node_version` | No       | `20.x`    | Node.js version to use    |
-| `run_tests`    | No       | `true`    | Whether to run test cases |
+| Name           | Required | Default   | Description                                            |
+| -------------- | -------- | --------- | ------------------------------------------------------ |
+| `framework`    | No       | `angular` | Framework under test                                   |
+| `node_version` | No       | `20.x`    | Node.js version to use                                 |
+| `run_tests`    | No       | `true`    | Whether to run test cases                              |
+| `app_path`     | No       | `.`       | Path to application directory (relative to repo root) |
 
 ---
 
@@ -147,9 +151,12 @@ Set these in your repository's Settings > Secrets and variables > Actions:
 
 ### Required Files in Your Repository
 
+These files should be in your application directory (root or specified via `app_path`):
+
 - `Dockerfile` - For building the Docker image
 - `docker-compose.yml` - For running the container on EC2
 - `package.json` - With build scripts (`build`, `build:dev`, `build:uat`, `build:prod`)
+- `package-lock.json` - For npm caching
 
 ---
 
