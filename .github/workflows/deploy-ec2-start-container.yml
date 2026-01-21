@@ -9,6 +9,11 @@ on:
         description: "Docker image name (for cleanup)"
         required: true
         type: string
+      is_ui_app:
+        description: "Whether the app is a UI app"
+        required: false
+        type: boolean
+        default: false
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -30,6 +35,7 @@ jobs:
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       PORT_MAPPING: ${{ vars.PORT_MAPPING }}
+      UI_PORT_MAPPING: ${{ vars.UI_PORT_MAPPING }}
       CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
       CLOUDWATCH_LOG_STREAM: ${{ vars.CLOUDWATCH_LOG_STREAM }}
       AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
@@ -113,10 +119,15 @@ jobs:
 
       - name: Start Docker container
         run: |
+          if [ "${{ inputs.is_ui_app }}" == "true" ]; then
+            SELCTED_PORT_MAPPING=${{ env.UI_PORT_MAPPING }}
+          else
+            SELCTED_PORT_MAPPING=${{ env.PORT_MAPPING }}
+          fi
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["cd /var/tmp && PORT_MAPPING=${{ env.PORT_MAPPING }} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${{ env.CLOUDWATCH_LOG_GROUP }} CLOUDWATCH_LOG_STREAM=${{ env.CLOUDWATCH_LOG_STREAM }} docker compose up -d"]}' \
+            --parameters '{"commands":["cd /var/tmp && PORT_MAPPING=${SELCTED_PORT_MAPPING} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${{ env.CLOUDWATCH_LOG_GROUP }} CLOUDWATCH_LOG_STREAM=${{ env.CLOUDWATCH_LOG_STREAM }} docker compose up -d"]}' \
             --region ${{ env.AWS_REGION }} \
             --query 'Command.CommandId' \
             --output text)

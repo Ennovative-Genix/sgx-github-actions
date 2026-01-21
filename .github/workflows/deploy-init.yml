@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: "."
+      is_ui_app:
+        description: "Whether the app is a UI app"
+        required: false
+        type: boolean
+        default: false
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -68,6 +73,7 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       docker_image_name: ${{ inputs.docker_image_name }}
+      is_ui_app: ${{ inputs.is_ui_app }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
