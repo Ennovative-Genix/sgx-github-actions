@@ -74,6 +74,7 @@ jobs:
       environment: ${{ inputs.environment }}
       docker_image_name: ${{ inputs.docker_image_name }}
       is_ui_app: ${{ inputs.is_ui_app }}
+      app_path: ${{ inputs.app_path }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
