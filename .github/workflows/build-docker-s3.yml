@@ -50,27 +50,27 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node_version }}
-          cache: "npm"
-          cache-dependency-path: ${{ env.APP_PATH }}/package-lock.json
+      # - name: Set up Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: ${{ inputs.node_version }}
+      #     cache: "npm"
+      #     cache-dependency-path: ${{ env.APP_PATH }}/package-lock.json
 
-      - name: Install dependencies
-        working-directory: ${{ env.APP_PATH }}
-        run: npm install
+      # - name: Install dependencies
+      #   working-directory: ${{ env.APP_PATH }}
+      #   run: npm install
 
-      - name: Build Project
-        working-directory: ${{ env.APP_PATH }}
-        run: |
-          if [[ "${{ env.TARGET_ENV }}" == "uat" ]]; then
-            npm run build:uat || npm run build || true
-          elif [[ "${{ env.TARGET_ENV }}" == "prod" ]]; then
-            npm run build:prod || npm run build || true
-          else
-            npm run build:dev || npm run build || true
-          fi
+      # - name: Build Project
+      #   working-directory: ${{ env.APP_PATH }}
+      #   run: |
+      #     if [[ "${{ env.TARGET_ENV }}" == "uat" ]]; then
+      #       npm run build:uat || npm run build || true
+      #     elif [[ "${{ env.TARGET_ENV }}" == "prod" ]]; then
+      #       npm run build:prod || npm run build || true
+      #     else
+      #       npm run build:dev || npm run build || true
+      #     fi
 
       - name: Docker build
         working-directory: ${{ env.APP_PATH }}
