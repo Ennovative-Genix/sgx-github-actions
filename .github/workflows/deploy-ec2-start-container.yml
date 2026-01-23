@@ -139,7 +139,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["cd /var/tmp && PORT_MAPPING=${SELCTED_PORT_MAPPING} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${ CLOUDWATCH_LOG_GROUP_PARAM } CLOUDWATCH_LOG_STREAM=${ CLOUDWATCH_LOG_STREAM_PARAM } docker compose up -d"]}' \
+            --parameters '{"commands":["cd /var/tmp && PORT_MAPPING=${SELCTED_PORT_MAPPING} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${CLOUDWATCH_LOG_GROUP_PARAM} CLOUDWATCH_LOG_STREAM=${CLOUDWATCH_LOG_STREAM_PARAM} docker compose up -d"]}' \
             --region ${{ env.AWS_REGION }} \
             --query 'Command.CommandId' \
             --output text)
