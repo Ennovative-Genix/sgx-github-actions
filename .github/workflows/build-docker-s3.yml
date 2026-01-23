@@ -75,7 +75,10 @@ jobs:
       - name: Docker build
         working-directory: ${{ env.APP_PATH }}
         run: |
-          docker build -f Dockerfile -t ${{ inputs.docker_image_name }}:latest .
+          docker build \
+            --build-arg ENV=${{ env.TARGET_ENV }} \
+            -f Dockerfile \ 
+            -t ${{ inputs.docker_image_name }}:latest .
           echo "Docker image ${{ inputs.docker_image_name }}:latest built"
 
       - name: Save Docker image to tarball
