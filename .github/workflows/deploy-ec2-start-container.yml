@@ -130,8 +130,8 @@ jobs:
             SELECTED_PORT_MAPPING="${{ env.PORT_MAPPING }}"
           fi
           if [ "${{ vars.CLOUDWATCH_LOG_GROUP }}" != "" ]; then
-            CLOUDWATCH_LOG_GROUP_PARAM="CLOUDWATCH_LOG_GROUP=${{ vars.CLOUDWATCH_LOG_GROUP }}"
-            CLOUDWATCH_LOG_STREAM_PARAM="CLOUDWATCH_LOG_STREAM=${{ vars.CLOUDWATCH_LOG_STREAM }}"
+            CLOUDWATCH_LOG_GROUP_PARAM="${{ vars.CLOUDWATCH_LOG_GROUP }}"
+            CLOUDWATCH_LOG_STREAM_PARAM="${{ vars.CLOUDWATCH_LOG_STREAM }}"
           else
             CLOUDWATCH_LOG_GROUP_PARAM=""
             CLOUDWATCH_LOG_STREAM_PARAM=""
