@@ -13,6 +13,11 @@ Complete deployment pipeline that builds, uploads to S3, and deploys to EC2.
 ```yaml
 name: Deploy
 
+# Add permissions for the workflow to read and write to the repository
+permissions:
+  contents: read
+  id-token: write
+
 on:
   push:
     branches: [main]
@@ -25,6 +30,7 @@ jobs:
       docker_image_name: my-app
       s3_path: my-app/builds
       app_path: packages/backend # Optional - path to app if not in repo root
+      is_ui_app: false # Optional - whether the app is a UI app
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
@@ -33,12 +39,13 @@ jobs:
 
 **Inputs:**
 
-| Name                | Required | Default | Description                                              |
-| ------------------- | -------- | ------- | -------------------------------------------------------- |
-| `environment`       | Yes      | -       | Target environment (`dev`, `uat`, `prod`)                |
-| `docker_image_name` | Yes      | -       | Docker image name                                        |
-| `s3_path`           | Yes      | -       | S3 path prefix for uploads/downloads                     |
-| `app_path`          | No       | `.`     | Path to application directory (relative to repo root)   |
+| Name                | Required | Default | Description                                           |
+| ------------------- | -------- | ------- | ----------------------------------------------------- |
+| `environment`       | Yes      | -       | Target environment (`dev`, `uat`, `prod`)             |
+| `docker_image_name` | Yes      | -       | Docker image name                                     |
+| `s3_path`           | Yes      | -       | S3 path prefix for uploads/downloads                  |
+| `app_path`          | No       | `.`     | Path to application directory (relative to repo root) |
+| `is_ui_app`         | No       | `false` | Whether the app is a UI app                           |
 
 **Secrets:**
 
@@ -82,11 +89,11 @@ jobs:
 
 **Inputs:**
 
-| Name           | Required | Default   | Description                                            |
-| -------------- | -------- | --------- | ------------------------------------------------------ |
-| `framework`    | No       | `angular` | Framework under test                                   |
-| `node_version` | No       | `20.x`    | Node.js version to use                                 |
-| `run_tests`    | No       | `true`    | Whether to run test cases                              |
+| Name           | Required | Default   | Description                                           |
+| -------------- | -------- | --------- | ----------------------------------------------------- |
+| `framework`    | No       | `angular` | Framework under test                                  |
+| `node_version` | No       | `20.x`    | Node.js version to use                                |
+| `run_tests`    | No       | `true`    | Whether to run test cases                             |
 | `app_path`     | No       | `.`       | Path to application directory (relative to repo root) |
 
 ---

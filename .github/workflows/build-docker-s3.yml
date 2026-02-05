@@ -9,7 +9,7 @@ on:
         description: "Node.js version to use"
         required: false
         type: string
-        default: "20.x"
+        default: "24.x"
       docker_image_name:
         description: "Docker image name"
         required: true
@@ -50,32 +50,10 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      # - name: Set up Node.js
-      #   uses: actions/setup-node@v4
-      #   with:
-      #     node-version: ${{ inputs.node_version }}
-      #     cache: "npm"
-      #     cache-dependency-path: ${{ env.APP_PATH }}/package-lock.json
-
-      # - name: Install dependencies
-      #   working-directory: ${{ env.APP_PATH }}
-      #   run: npm install
-
-      # - name: Build Project
-      #   working-directory: ${{ env.APP_PATH }}
-      #   run: |
-      #     if [[ "${{ env.TARGET_ENV }}" == "uat" ]]; then
-      #       npm run build:uat || npm run build || true
-      #     elif [[ "${{ env.TARGET_ENV }}" == "prod" ]]; then
-      #       npm run build:prod || npm run build || true
-      #     else
-      #       npm run build:dev || npm run build || true
-      #     fi
-
       - name: Docker build
         working-directory: ${{ env.APP_PATH }}
         run: |
-          docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile -t ${{ inputs.docker_image_name }}:latest .
+          docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile.client -t ${{ inputs.docker_image_name }}:latest .
           echo "Docker image ${{ inputs.docker_image_name }}:latest built"
 
       - name: Save Docker image to tarball
