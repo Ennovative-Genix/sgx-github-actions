@@ -71,6 +71,18 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-EC2-Start-Container-${{ github.run_id }}
 
+      - name: Ensure app directory exists on EC2
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":["mkdir -p /var/tmp/${{ inputs.docker_image_name }}"]}' \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Ensure app directory exists"
+
       - name: Fetch .env from AWS Secrets Manager
         if: ${{ env.AWS_SECRETS_ARN != '' }}
         run: |
