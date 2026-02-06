@@ -23,6 +23,11 @@ on:
         required: false
         type: string
         default: "."
+      is_ui_app:
+        description: "Whether the app is a UI app"
+        required: false
+        type: boolean
+        default: false
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -50,10 +55,18 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Docker build
+      - name: Docker build client
+        if: ${{ inputs.is_ui_app == true  }}
         working-directory: ${{ env.APP_PATH }}
         run: |
           docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile.client -t ${{ inputs.docker_image_name }}:latest .
+          echo "Docker image ${{ inputs.docker_image_name }}:latest built"
+
+      - name: Docker build server
+        if: ${{ inputs.is_ui_app == false }}
+        working-directory: ${{ env.APP_PATH }}
+        run: |
+          docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile.server -t ${{ inputs.docker_image_name }}:latest .
           echo "Docker image ${{ inputs.docker_image_name }}:latest built"
 
       - name: Save Docker image to tarball
