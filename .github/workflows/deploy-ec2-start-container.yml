@@ -85,7 +85,7 @@ jobs:
         if: ${{ env.AWS_SECRETS_ARN != '' }}
         run: |
           ENV_CONTENT=$(cat .env | base64 | tr -d '\n')
-          COMMAND="echo $ENV_CONTENT | base64 -d > /var/tmp/.env"
+          COMMAND="echo $ENV_CONTENT | base64 -d > /var/tmp/${{ inputs.docker_image_name }}/.env"
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
@@ -100,7 +100,7 @@ jobs:
         if: ${{ inputs.is_ui_app == true }}
         run: |
           COMPOSE_CONTENT=$(cat ${{ inputs.app_path }}/docker-compose.client.yml | base64 | tr -d '\n')
-          COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/docker-compose.yml"
+          COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/${{ inputs.docker_image_name }}/docker-compose.yml"
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
@@ -115,7 +115,7 @@ jobs:
         if: ${{ inputs.is_ui_app == false }}
         run: |
           COMPOSE_CONTENT=$(cat ${{ inputs.app_path }}/docker-compose.server.yml | base64 | tr -d '\n')
-          COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/docker-compose.yml"
+          COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/${{ inputs.docker_image_name }}/docker-compose.yml"
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
@@ -131,7 +131,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["cd /var/tmp && docker compose down || true"]}' \
+            --parameters '{"commands":["cd /var/tmp/${{ inputs.docker_image_name }}/ && docker compose down || true"]}' \
             --region ${{ env.AWS_REGION }} \
             --query 'Command.CommandId' \
             --output text)
@@ -155,7 +155,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"cd /var/tmp && PORT_MAPPING=${SELECTED_PORT_MAPPING} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${CLOUDWATCH_LOG_GROUP_PARAM} CLOUDWATCH_LOG_STREAM=${CLOUDWATCH_LOG_STREAM_PARAM} docker compose up -d\"]}" \
+            --parameters "{\"commands\":[\"cd /var/tmp/${{ inputs.docker_image_name }}/ && PORT_MAPPING=${SELECTED_PORT_MAPPING} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${CLOUDWATCH_LOG_GROUP_PARAM} CLOUDWATCH_LOG_STREAM=${CLOUDWATCH_LOG_STREAM_PARAM} docker compose up -d\"]}" \
             --region ${{ env.AWS_REGION }} \
             --query 'Command.CommandId' \
             --output text)
@@ -167,7 +167,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["rm -f /var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz || true"]}' \
+            --parameters '{"commands":["rm -f /var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz || true"]}' \
             --region ${{ env.AWS_REGION }} \
             --query 'Command.CommandId' \
             --output text)
