@@ -51,6 +51,7 @@ jobs:
       docker_image_name: ${{ inputs.docker_image_name }}
       s3_path: ${{ inputs.s3_path }}
       app_path: ${{ inputs.app_path }}
+      is_ui_app: ${{ inputs.is_ui_app }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
