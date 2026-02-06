@@ -96,9 +96,25 @@ jobs:
 
           workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy .env to EC2 Instance"
 
-      - name: Copy docker-compose.yml to EC2 Instance
+      - name: Copy docker-compose.client.yml to EC2 Instance
+        if: ${{ inputs.is_ui_app == true }}
         run: |
-          COMPOSE_CONTENT=$(cat ${{ inputs.app_path }}/docker-compose.yml | base64 | tr -d '\n')
+          COMPOSE_CONTENT=$(cat ${{ inputs.app_path }}/docker-compose.client.yml | base64 | tr -d '\n')
+          COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/docker-compose.yml"
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters "{\"commands\":[\"$COMMAND\"]}" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy docker-compose.yml"
+
+      - name: Copy docker-compose.server.yml to EC2 Instance
+        if: ${{ inputs.is_ui_app == false }}
+        run: |
+          COMPOSE_CONTENT=$(cat ${{ inputs.app_path }}/docker-compose.server.yml | base64 | tr -d '\n')
           COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/docker-compose.yml"
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
