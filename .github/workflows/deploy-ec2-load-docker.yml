@@ -59,6 +59,18 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-EC2-Load-Docker-${{ github.run_id }}
 
+      - name: Prune unused images from Docker (via SSM)
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "{\"commands\":[\"docker image prune -f\"]}" \
+            --region "${{ env.AWS_REGION }}" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Prune unused images from Docker"
+
       - name: Copy Docker Image from S3 to EC2 Instance (via SSM)
         run: |
           S3_SOURCE="s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/latest.tar.gz"
