@@ -36,6 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
+      # All dev ec2 are in the ap-south-1 region, all prod and uat ec2 are in the us-east-1 region
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || 'ap-south-1' }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
@@ -84,11 +85,12 @@ jobs:
           workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Ensure app directory exists"
 
       - name: Fetch .env from AWS Secrets Manager
+        # Since all the secrets are in the ap-south-1 region, we can use the ap-south-1 region for the AWS Secrets Manager
         if: ${{ env.AWS_SECRETS_ARN != '' }}
         run: |
           aws secretsmanager get-secret-value \
             --secret-id ${{ env.AWS_SECRETS_ARN }} \
-            --region ${{ env.AWS_REGION }} \
+            --region ap-south-1 \
             --query 'SecretString' \
             --output text > .env
           echo ".env file fetched from AWS Secrets Manager"
