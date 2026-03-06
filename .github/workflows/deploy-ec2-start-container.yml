@@ -37,7 +37,7 @@ jobs:
     environment: ${{ inputs.environment }}
     env:
       # All dev ec2 are in the ap-south-1 region, all prod and uat ec2 are in the us-east-1 region
-      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || 'ap-south-1' }}
+      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'ap-south-1' || 'ap-south-1' }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       PORT_MAPPING: ${{ vars.PORT_MAPPING }}
