@@ -25,6 +25,7 @@ jobs:
       docker_image_name: my-app
       s3_path: my-app/builds
       app_path: packages/backend # Optional - path to app if not in repo root
+      is_ui_app: false # Optional - set true for UI apps (uses UI_PORT_MAPPING)
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
@@ -39,6 +40,7 @@ jobs:
 | `docker_image_name` | Yes      | -       | Docker image name                                        |
 | `s3_path`           | Yes      | -       | S3 path prefix for uploads/downloads                     |
 | `app_path`          | No       | `.`     | Path to application directory (relative to repo root)   |
+| `is_ui_app`         | No       | `false` | Set `true` for UI apps (uses `UI_PORT_MAPPING` variable) |
 
 **Secrets:**
 
@@ -132,12 +134,13 @@ Runs Angular-specific tests.
 
 Set these in your repository's Settings > Environments > [environment] > Environment variables:
 
-| Variable                | Description                           |
-| ----------------------- | ------------------------------------- |
-| `S3_BUILD_BUCKET`       | S3 bucket name for storing builds     |
-| `PORT_MAPPING`          | Docker port mapping (e.g., `8080:80`) |
-| `CLOUDWATCH_LOG_GROUP`  | CloudWatch log group name             |
-| `CLOUDWATCH_LOG_STREAM` | CloudWatch log stream name            |
+| Variable                | Description                                           |
+| ----------------------- | ----------------------------------------------------- |
+| `S3_BUILD_BUCKET`       | S3 bucket name for storing builds                     |
+| `PORT_MAPPING`          | Docker port mapping (e.g., `8080:80`)                 |
+| `UI_PORT_MAPPING`       | Port mapping for UI apps (when `is_ui_app` is true)  |
+| `CLOUDWATCH_LOG_GROUP`  | CloudWatch log group name                             |
+| `CLOUDWATCH_LOG_STREAM` | CloudWatch log stream name                            |
 
 ### Secrets
 
@@ -157,6 +160,20 @@ These files should be in your application directory (root or specified via `app_
 - `docker-compose.yml` - For running the container on EC2
 - `package.json` - With build scripts (`build`, `build:dev`, `build:uat`, `build:prod`)
 - `package-lock.json` - For npm caching
+
+---
+
+## AWS Region Mapping
+
+Deploy workflows select the AWS region from the branch that triggers the run:
+
+| Branch   | AWS Region  | Typical use  |
+| -------- | ----------- | ------------ |
+| `release/*` | `us-east-1` | UAT / release |
+| `main`      | `ap-south-1`| Production    |
+| Other (e.g. `dev`, feature branches) | `ap-south-1` | Development |
+
+Ensure EC2 instances, S3 buckets, and IAM roles are in the region that matches the branch you deploy from. Secrets Manager always reads from `ap-south-1`.
 
 ---
 

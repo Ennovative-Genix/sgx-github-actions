@@ -33,7 +33,7 @@ jobs:
     env:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-      # All dev ec2 are in the ap-south-1 region, all prod and uat ec2 are in the us-east-1 region
+      # release → us-east-1, main (prod) → ap-south-1, dev → ap-south-1
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'ap-south-1' || 'ap-south-1' }}
       S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
 
@@ -72,10 +72,21 @@ jobs:
 
           workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Prune unused images from Docker"
 
+      - name: Ensure app directory exists on EC2
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":["mkdir -p /var/tmp/${{ inputs.docker_image_name }}"]}' \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Ensure app directory exists"
+
       - name: Copy Docker Image from S3 to EC2 Instance (via SSM)
         run: |
           S3_SOURCE="s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/latest.tar.gz"
-          DEST_PATH="/var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz"
+          DEST_PATH="/var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz"
           SSM_COMMAND="aws s3 cp ${S3_SOURCE} ${DEST_PATH} --region ${{ env.AWS_REGION }}"
 
           COMMAND_ID=$(aws ssm send-command \
@@ -90,12 +101,12 @@ jobs:
 
       - name: Load Docker image into Docker on EC2
         run: |
-          TAR_FILE="/var/tmp/${{ inputs.docker_image_name }}-latest.tar.gz"
+          TAR_FILE="/var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz"
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"ls -lh /var/tmp/\",\"gunzip -c ${TAR_FILE} | docker load\"]}" \
+            --parameters "{\"commands\":[\"ls -lh /var/tmp/${{ inputs.docker_image_name }}/\",\"gunzip -c ${TAR_FILE} | docker load\"]}" \
             --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
             --output text)
