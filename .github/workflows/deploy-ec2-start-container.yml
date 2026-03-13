@@ -36,8 +36,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
-      # All dev ec2 are in the ap-south-1 region, all prod and uat ec2 are in the us-east-1 region
-      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || 'ap-south-1' }}
+      # release → us-east-1, main (prod) → ap-south-1, dev → ap-south-1
+      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'ap-south-1' || 'ap-south-1' }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       PORT_MAPPING: ${{ vars.PORT_MAPPING }}
@@ -151,6 +151,18 @@ jobs:
             --output text)
 
           workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Stop Docker Container"
+
+      - name: Remove Docker Container with the same name
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":["docker rm -f ${{ inputs.docker_image_name }} || true"]}' \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Command.CommandId' \
+            --output text)
+
+          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Remove Docker Container with the same name"
 
       - name: Start Docker container
         run: |

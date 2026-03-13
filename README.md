@@ -60,7 +60,7 @@ jobs:
 1. **Pre-Build Cleanup** - Frees up disk space on runner
 2. **Build and Upload** - Builds project, creates Docker image, uploads to S3
 3. **Load Docker to EC2** - Copies Docker image from S3 to EC2 and loads it
-4. **Start Container** - Optionally fetches .env from Secrets Manager, copies docker-compose.yml, and starts container
+4. **Start Container** - Optionally fetches .env from Secrets Manager, copies docker-compose (client or server based on `is_ui_app`), and starts container
 
 ---
 
@@ -106,8 +106,7 @@ These workflows are used internally by the main workflows but can also be called
 
 Builds the project, creates a Docker image, and uploads to S3.
 
-- Supports environment-specific builds (`npm run build:dev`, `build:uat`, `build:prod`)
-- Falls back to `npm run build` if environment-specific script doesn't exist
+- Uses `Dockerfile.client` for UI apps (`is_ui_app: true`), `Dockerfile.server` otherwise
 - Uploads to S3 with both `latest.tar.gz` and `{sha}.tar.gz` versions
 
 #### `deploy-ec2-load-docker.yml`
@@ -119,7 +118,7 @@ Copies Docker image from S3 to EC2 and loads it into Docker.
 Starts the Docker container on EC2:
 
 - Optionally fetches `.env` from AWS Secrets Manager
-- Copies `docker-compose.yml` to EC2
+- Copies `docker-compose.client.yml` (UI apps) or `docker-compose.server.yml` to EC2 as `docker-compose.yml`
 - Stops existing container and starts new one
 - Cleans up temporary files
 
@@ -139,12 +138,13 @@ Runs Angular-specific tests.
 
 Set these in your repository's Settings > Environments > [environment] > Environment variables:
 
-| Variable                | Description                           |
-| ----------------------- | ------------------------------------- |
-| `S3_BUILD_BUCKET`       | S3 bucket name for storing builds     |
-| `PORT_MAPPING`          | Docker port mapping (e.g., `8080:80`) |
-| `CLOUDWATCH_LOG_GROUP`  | CloudWatch log group name             |
-| `CLOUDWATCH_LOG_STREAM` | CloudWatch log stream name            |
+| Variable                | Description                                           |
+| ----------------------- | ----------------------------------------------------- |
+| `S3_BUILD_BUCKET`       | S3 bucket name for storing builds                     |
+| `PORT_MAPPING`          | Docker port mapping (e.g., `8080:80`)                 |
+| `UI_PORT_MAPPING`       | Port mapping for UI apps (when `is_ui_app` is true)   |
+| `CLOUDWATCH_LOG_GROUP`  | CloudWatch log group name                             |
+| `CLOUDWATCH_LOG_STREAM` | CloudWatch log stream name                            |
 
 ### Secrets
 
@@ -160,10 +160,24 @@ Set these in your repository's Settings > Secrets and variables > Actions:
 
 These files should be in your application directory (root or specified via `app_path`):
 
-- `Dockerfile` - For building the Docker image
-- `docker-compose.yml` - For running the container on EC2
-- `package.json` - With build scripts (`build`, `build:dev`, `build:uat`, `build:prod`)
+- **UI apps** (`is_ui_app: true`): `Dockerfile.client`, `docker-compose.client.yml`
+- **Server apps** (`is_ui_app: false`): `Dockerfile.server`, `docker-compose.server.yml`
+- `package.json` (with build scripts as needed)
 - `package-lock.json` - For npm caching
+
+---
+
+## AWS Region Mapping
+
+Deploy workflows select the AWS region from the branch that triggers the run:
+
+| Branch        | AWS Region   | Typical use   |
+| ------------- | ------------ | ------------- |
+| `release/*`   | `us-east-1`  | UAT / release |
+| `main`        | `ap-south-1` | Production    |
+| Other (e.g. `dev`, feature branches) | `ap-south-1` | Development   |
+
+Ensure EC2 instances, S3 buckets, and IAM roles are in the region that matches the branch you deploy from. Secrets Manager is always read from `ap-south-1`.
 
 ---
 

@@ -40,8 +40,8 @@ jobs:
     environment: ${{ inputs.environment }}
     env:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      # All dev ec2 are in the ap-south-1 region, all prod and uat ec2 are in the us-east-1 region
-      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || 'ap-south-1' }}
+      # release → us-east-1, main (prod) → ap-south-1, dev → ap-south-1
+      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'ap-south-1' || 'ap-south-1' }}
       S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
       TARGET_ENV: ${{ inputs.environment }}
       APP_PATH: ${{ inputs.app_path }}
