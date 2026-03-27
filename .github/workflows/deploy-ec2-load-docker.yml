@@ -65,7 +65,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"docker image prune -f\"]}" \
+            --parameters "{\"commands\":[\"docker image prune -f || true\"]}" \
             --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
             --output text)
