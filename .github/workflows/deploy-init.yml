@@ -6,7 +6,7 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (dev, uat, prod)"
+        description: "Target environment (dev, uat, stg, prod)"
         required: true
         type: string
       docker_image_name:
