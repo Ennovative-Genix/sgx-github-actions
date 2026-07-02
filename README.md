@@ -2,11 +2,13 @@
 
 Centralized repository for reusable GitHub Actions workflows used across various projects.
 
+> **Versioning:** consumers reference these workflows with `@main`, so any change merged here takes effect immediately for every consumer. Until tagged releases (`@v1`, …) are introduced, treat changes to this repo as breaking changes for all consumers.
+
 ## Available Workflows
 
-### Deploy Workflow (`deploy-init.yml`)
+### Deploy Workflow (`init.yml`)
 
-Complete deployment pipeline that builds, uploads to S3, and deploys to EC2.
+Complete deployment pipeline that builds a Docker image, pushes it to **Amazon ECR**, and deploys it to **Kubernetes (EKS)** with `kubectl` against the consumer's own manifests.
 
 **Usage:**
 
@@ -19,112 +21,73 @@ on:
 
 jobs:
   deploy:
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy-init.yml@main
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/init.yml@main
     with:
       environment: dev # dev, uat, or prod
+      env_region: ap-south-1 # AWS region for this environment
       docker_image_name: my-app
-      s3_path: my-app/builds
       app_path: packages/backend # Optional - path to app if not in repo root
-      is_ui_app: false # Optional - set true for UI apps (uses UI_PORT_MAPPING)
+      # ecr_repository: my-app          # Optional - defaults to docker_image_name
+      # deployment_name: my-app         # Optional - defaults to docker_image_name
+      # container_name: my-app          # Optional - defaults to docker_image_name
+      # manifest_path: k8s/overlays/dev # Optional - auto-detected if omitted
+      # namespace: dev                  # Optional - defaults to environment
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }} # Optional
 ```
 
 **Inputs:**
 
-| Name                | Required | Default | Description                                              |
-| ------------------- | -------- | ------- | -------------------------------------------------------- |
-| `environment`       | Yes      | -       | Target environment (`dev`, `uat`, `prod`)                |
-| `docker_image_name` | Yes      | -       | Docker image name                                        |
-| `s3_path`           | Yes      | -       | S3 path prefix for uploads/downloads                     |
-| `app_path`          | No       | `.`     | Path to application directory (relative to repo root)   |
-| `is_ui_app`         | No       | `false` | Set `true` for UI apps (uses `UI_PORT_MAPPING` variable) |
+| Name                | Required | Default             | Description                                                        |
+| ------------------- | -------- | ------------------- | ------------------------------------------------------------------ |
+| `environment`       | Yes      | -                   | Target environment (`dev`, `uat`, `prod`)                          |
+| `env_region`        | Yes      | -                   | AWS region for this environment (ECR + EKS)                        |
+| `docker_image_name` | Yes      | -                   | Image name; default ECR repo / Deployment / container name         |
+| `app_path`          | No       | `.`                 | Path to application directory (build context), relative to repo    |
+| `ecr_repository`    | No       | `docker_image_name` | ECR repository name                                                |
+| `deployment_name`   | No       | `docker_image_name` | Kubernetes Deployment to update                                    |
+| `container_name`    | No       | `docker_image_name` | Container within the Deployment to set the new image on            |
+| `manifest_path`     | No       | _auto_              | kustomize dir or plain manifests in your repo (see below)          |
+| `namespace`         | No       | `environment`       | Kubernetes namespace to deploy into                                |
 
 **Secrets:**
 
-| Name              | Required | Description                              |
-| ----------------- | -------- | ---------------------------------------- |
-| `IAM_ROLE_ARN`    | Yes      | AWS IAM Role ARN for OIDC authentication |
-| `EC2_INSTANCE_ID` | Yes      | Target EC2 Instance ID                   |
-| `AWS_SECRETS_ARN` | No       | AWS Secrets Manager ARN for .env file    |
+| Name           | Required | Description                                       |
+| -------------- | -------- | ------------------------------------------------- |
+| `IAM_ROLE_ARN` | Yes      | AWS IAM Role ARN for OIDC (ECR push + EKS access) |
 
 **Pipeline Steps:**
 
-1. **Pre-Build Cleanup** - Frees up disk space on runner
-2. **Build and Upload** - Builds project, creates Docker image, uploads to S3
-3. **Load Docker to EC2** - Copies Docker image from S3 to EC2 and loads it
-4. **Start Container** - Optionally fetches .env from Secrets Manager, copies docker-compose.yml, and starts container
+1. **Validate inputs** - Fails closed before any AWS credentials are assumed if `environment` isn't `dev`/`uat`/`prod` or `docker_image_name`/`app_path` contain unexpected characters.
+2. **Build and Push to ECR** (`build-ecr.yml`) - OIDC → ECR login → Buildx build (with `ENV=<environment>` build arg and a `type=gha` layer cache) → `docker push`. Tags the immutable `:<git-sha>` (the deploy handle) and a moving `:<environment>` tag. Only changed layers are transferred. Outputs a digest-pinned image reference.
+3. **Deploy to Kubernetes** (`deploy-k8s.yml`) - OIDC → `aws eks update-kubeconfig` → `kubectl apply` your manifests → `kubectl set image` (digest-pinned) → `kubectl rollout status` with **automatic rollback** to the previous revision on failure.
 
----
-
-### Test Workflow (`test-init.yml`)
-
-Run tests for your project with framework-specific configurations.
-
-**Usage:**
-
-```yaml
-name: Test
-
-on:
-  pull_request:
-    branches: [main]
-
-jobs:
-  test:
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/test-init.yml@main
-    with:
-      framework: angular
-      node_version: "20.x"
-      run_tests: true
-      app_path: packages/frontend # Optional - path to app if not in repo root
-```
-
-**Inputs:**
-
-| Name           | Required | Default   | Description                                            |
-| -------------- | -------- | --------- | ------------------------------------------------------ |
-| `framework`    | No       | `angular` | Framework under test                                   |
-| `node_version` | No       | `20.x`    | Node.js version to use                                 |
-| `run_tests`    | No       | `true`    | Whether to run test cases                              |
-| `app_path`     | No       | `.`       | Path to application directory (relative to repo root) |
+> Runs are serialized per `environment` + `docker_image_name` via a `concurrency` group, so two deploys to the same target won't race.
 
 ---
 
 ### Individual Workflows
 
-These workflows are used internally by the main workflows but can also be called directly:
+These workflows are used internally by `init.yml` but can also be called directly:
 
-#### `build-docker-s3.yml`
+#### `build-ecr.yml`
 
-Builds the project, creates a Docker image, and uploads to S3.
+Builds a Docker image (Buildx + GitHub Actions layer cache) and pushes it to Amazon ECR.
 
-- Supports environment-specific builds (`npm run build:dev`, `build:uat`, `build:prod`)
-- Falls back to `npm run build` if environment-specific script doesn't exist
-- Uploads to S3 with both `latest.tar.gz` and `{sha}.tar.gz` versions
+- Builds with `ENV=<environment>` passed as a build arg; any environment-specific build logic lives inside your `Dockerfile`
+- Layer cache is keyed by `docker_image_name` (`type=gha` scope), so unchanged layers are reused across runs
+- Pushes `:<git-sha>` (immutable deploy handle) and `:<environment>` (moving convenience tag)
+- Outputs a **digest-pinned** image reference (`repo@sha256:…`) consumed by the deploy step
 
-#### `deploy-ec2-load-docker.yml`
+#### `deploy-k8s.yml`
 
-Copies Docker image from S3 to EC2 and loads it into Docker.
+Deploys the image to EKS over `kubectl`:
 
-#### `deploy-ec2-start-container.yml`
+- OIDC → `aws eks update-kubeconfig` (no static kubeconfig secret; region from `env_region`, cluster from `EKS_CLUSTER_NAME`)
+- Applies your manifests (kustomize overlay or plain), then pins the named container to the built digest
+- Waits on `kubectl rollout status`; on failure dumps diagnostics and **rolls back** to the previous revision (first deploy has no rollback target)
 
-Starts the Docker container on EC2:
-
-- Optionally fetches `.env` from AWS Secrets Manager
-- Copies `docker-compose.yml` to EC2
-- Stops existing container and starts new one
-- Cleans up temporary files
-
-#### `prebuild-cleanup.yml`
-
-Frees up disk space on GitHub runners by removing unnecessary packages.
-
-#### `test-angular.yml`
-
-Runs Angular-specific tests.
+**Manifest resolution** (`manifest_path`): if omitted, the deploy looks for `k8s/overlays/<environment>/` (kustomize), else falls back to `k8s/`. A `kustomization.yaml` triggers `kubectl apply -k`; otherwise `kubectl apply -f` over the directory.
 
 ---
 
@@ -134,60 +97,45 @@ Runs Angular-specific tests.
 
 Set these in your repository's Settings > Environments > [environment] > Environment variables:
 
-| Variable                | Description                                           |
-| ----------------------- | ----------------------------------------------------- |
-| `S3_BUILD_BUCKET`       | S3 bucket name for storing builds                     |
-| `PORT_MAPPING`          | Docker port mapping (e.g., `8080:80`)                 |
-| `UI_PORT_MAPPING`       | Port mapping for UI apps (when `is_ui_app` is true)  |
-| `CLOUDWATCH_LOG_GROUP`  | CloudWatch log group name                             |
-| `CLOUDWATCH_LOG_STREAM` | CloudWatch log stream name                            |
+| Variable           | Required | Description                                  |
+| ------------------ | -------- | -------------------------------------------- |
+| `EKS_CLUSTER_NAME` | Yes      | Target EKS cluster name for this environment |
 
 ### Secrets
 
 Set these in your repository's Settings > Secrets and variables > Actions:
 
-| Secret            | Description                                                |
-| ----------------- | ---------------------------------------------------------- |
-| `IAM_ROLE_ARN`    | AWS IAM Role ARN for OIDC authentication                   |
-| `EC2_INSTANCE_ID` | Target EC2 Instance ID                                     |
-| `AWS_SECRETS_ARN` | (Optional) AWS Secrets Manager ARN containing .env content |
+| Secret         | Required | Description                                                  |
+| -------------- | -------- | ------------------------------------------------------------ |
+| `IAM_ROLE_ARN` | Yes      | AWS IAM Role ARN for OIDC (ECR push + `eks:DescribeCluster`) |
 
 ### Required Files in Your Repository
 
-These files should be in your application directory (root or specified via `app_path`):
+- `Dockerfile` in `app_path` - environment-specific logic should key off the `ENV` build arg
+- **Kubernetes manifests** - a `kustomize` overlay (`k8s/overlays/<environment>/kustomization.yaml`) or plain manifests (`k8s/`). Your `Deployment` should be named `docker_image_name` (or set `deployment_name`) with a container named `docker_image_name` (or set `container_name`). Define readiness/liveness probes so `rollout status` reflects real serving health.
 
-- `Dockerfile` - For building the Docker image
-- `docker-compose.yml` - For running the container on EC2
-- `package.json` - With build scripts (`build`, `build:dev`, `build:uat`, `build:prod`)
-- `package-lock.json` - For npm caching
+### Application secrets
+
+The pipeline does not handle application secrets. Your app fetches them at runtime from AWS (e.g. Secrets Manager) via the AWS SDK, using **IRSA / Pod Identity** — annotate the pod's ServiceAccount with an IAM role that has `secretsmanager:GetSecretValue`. No secret material passes through the CI runner.
 
 ---
 
-## AWS Region Mapping
+## AWS Region
 
-Deploy workflows select the AWS region from the branch that triggers the run:
-
-| Branch   | AWS Region  | Typical use  |
-| -------- | ----------- | ------------ |
-| `release/*` | `us-east-1` | UAT / release |
-| `main`      | `ap-south-1`| Production    |
-| Other (e.g. `dev`, feature branches) | `ap-south-1` | Development |
-
-Ensure EC2 instances, S3 buckets, and IAM roles are in the region that matches the branch you deploy from. Secrets Manager always reads from `ap-south-1`.
+The region is passed explicitly per call via the **`env_region`** input, used by both build (ECR) and deploy (EKS). Ensure the environment's ECR repository and EKS cluster both live in that region.
 
 ---
 
 ## AWS Prerequisites
 
 1. **OIDC Provider** configured for GitHub Actions
-2. **IAM Role** with permissions for:
-   - S3 (read/write to build bucket)
-   - SSM (SendCommand, GetCommandInvocation)
-   - Secrets Manager (GetSecretValue) - if using AWS_SECRETS_ARN
-3. **EC2 Instance** with:
-   - SSM Agent installed and running
-   - Docker installed
-   - IAM Instance Profile with S3 read access
+2. **IAM Role** (assumed via OIDC by CI) with permissions for:
+   - ECR (push/pull to the app repository)
+   - EKS (`eks:DescribeCluster`) plus an **EKS access entry** granting edit on the target namespace
+3. **Amazon ECR repository** for the image (per region)
+4. **EKS cluster** for the environment, with the target namespace (auto-created if missing); set `EKS_CLUSTER_NAME` per environment
+5. **IRSA / Pod Identity** for the app's ServiceAccount if the app reads secrets at runtime (e.g. `secretsmanager:GetSecretValue`)
+6. **GitHub Environments** `dev`/`uat`/`prod` created in each consumer repo (so environment protection rules and the OIDC `environment` claim apply)
 
 ---
 

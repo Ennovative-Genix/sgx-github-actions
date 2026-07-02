@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Keep the SHA-pinned third-party actions current. Dependabot updates both the
+  # commit SHA and the trailing `# vX.Y.Z` version comment, and groups the bumps
+  # into a single PR so review stays low-noise.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

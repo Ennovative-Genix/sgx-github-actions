@@ -1,0 +1,117 @@
+permissions:
+  id-token: write
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, uat, prod)"
+        required: true
+        type: string
+      env_region:
+        description: "AWS region for this environment (ECR + EKS)"
+        required: true
+        type: string
+      docker_image_name:
+        description: "Docker image name (app name; default ECR repo / Deployment / container name)"
+        required: true
+        type: string
+      app_path:
+        description: "Path to the application directory (relative to repo root). Defaults to root."
+        required: false
+        type: string
+        default: "."
+      ecr_repository:
+        description: "ECR repository name. Defaults to docker_image_name."
+        required: false
+        type: string
+        default: ""
+      deployment_name:
+        description: "Kubernetes Deployment name. Defaults to docker_image_name."
+        required: false
+        type: string
+        default: ""
+      container_name:
+        description: "Container name within the Deployment to update. Defaults to docker_image_name."
+        required: false
+        type: string
+        default: ""
+      manifest_path:
+        description: "Path to a kustomize dir or plain manifests in the consumer repo. Auto-detected if empty."
+        required: false
+        type: string
+        default: ""
+      namespace:
+        description: "Kubernetes namespace. Defaults to the environment name."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
+        required: true
+
+concurrency:
+  group: deploy-${{ inputs.environment }}-${{ inputs.docker_image_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Fail closed on bad inputs BEFORE any AWS credentials are assumed. `environment`
+  # is a free-form string (workflow_call can't use `type: choice`), so a typo like
+  # "production" would silently select a non-existent GitHub Environment and bypass
+  # its protection rules. The charset checks also block shell metacharacters from
+  # reaching command strings downstream (defense-in-depth).
+  validate-inputs:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate environment / docker_image_name / app_path
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          DOCKER_IMAGE_NAME: ${{ inputs.docker_image_name }}
+          APP_PATH: ${{ inputs.app_path }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          case "$ENVIRONMENT" in
+            dev|uat|prod) ;;
+            *) fail "environment must be one of dev|uat|prod (got '$ENVIRONMENT')" ;;
+          esac
+
+          printf '%s' "$DOCKER_IMAGE_NAME" | grep -Eq '^[a-z0-9][a-z0-9._/-]*$' \
+            || fail "docker_image_name must match ^[a-z0-9][a-z0-9._/-]*$ (got '$DOCKER_IMAGE_NAME')"
+          printf '%s' "$APP_PATH" | grep -Eq '^[A-Za-z0-9._-][A-Za-z0-9._/-]*$' \
+            || fail "app_path must match ^[A-Za-z0-9._-][A-Za-z0-9._/-]*$ (got '$APP_PATH')"
+
+          echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
+
+  build-and-push:
+    name: Build and Push to ECR
+    needs: validate-inputs
+    uses: ./.github/workflows/build-ecr.yml
+    with:
+      environment: ${{ inputs.environment }}
+      env_region: ${{ inputs.env_region }}
+      docker_image_name: ${{ inputs.docker_image_name }}
+      app_path: ${{ inputs.app_path }}
+      ecr_repository: ${{ inputs.ecr_repository }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  deploy-k8s:
+    name: Deploy to Kubernetes
+    needs: build-and-push
+    uses: ./.github/workflows/deploy-k8s.yml
+    with:
+      environment: ${{ inputs.environment }}
+      env_region: ${{ inputs.env_region }}
+      docker_image_name: ${{ inputs.docker_image_name }}
+      image: ${{ needs.build-and-push.outputs.image }}
+      deployment_name: ${{ inputs.deployment_name }}
+      container_name: ${{ inputs.container_name }}
+      manifest_path: ${{ inputs.manifest_path }}
+      namespace: ${{ inputs.namespace }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}

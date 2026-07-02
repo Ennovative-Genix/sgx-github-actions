@@ -1,0 +1,125 @@
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, uat, prod)"
+        required: true
+        type: string
+      env_region:
+        description: "AWS region for this environment (ECR)"
+        required: true
+        type: string
+      docker_image_name:
+        description: "Docker image name (used as the app name and default ECR repository)"
+        required: true
+        type: string
+      app_path:
+        description: "Path to the application directory (relative to repo root). Defaults to root."
+        required: false
+        type: string
+        default: "."
+      ecr_repository:
+        description: "ECR repository name. Defaults to docker_image_name."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication (needs ECR push)"
+        required: true
+    outputs:
+      image:
+        description: "Fully-qualified ECR image reference pinned by digest (repo@sha256:...)"
+        value: ${{ jobs.build-push.outputs.image }}
+      digest:
+        description: "Image digest (sha256:...)"
+        value: ${{ jobs.build-push.outputs.digest }}
+      registry:
+        description: "ECR registry host (<account>.dkr.ecr.<region>.amazonaws.com)"
+        value: ${{ jobs.build-push.outputs.registry }}
+
+jobs:
+  build-push:
+    name: Build and Push to ECR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      # ECR repository name (defaults to the image name).
+      ECR_REPOSITORY: ${{ inputs.ecr_repository != '' && inputs.ecr_repository || inputs.docker_image_name }}
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+      registry: ${{ steps.login-ecr.outputs.registry }}
+
+    steps:
+      - name: Free up disk space
+        run: |
+          # Reclaim the two biggest preinstalled toolchains for build headroom.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android || true
+          df -h /
+
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          aws-region: ${{ inputs.env_region }}
+          role-session-name: GitHubActions-Build-ECR-${{ github.run_id }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@b040164c4934333d597f3f9c67502ff28f814e9c # v2.1.6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Compute image tags
+        id: meta
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          REPO_URI="${REGISTRY}/${ECR_REPOSITORY}"
+          echo "repo_uri=${REPO_URI}" >> "$GITHUB_OUTPUT"
+          # Immutable per-commit tag is the deploy handle; a moving <environment>
+          # tag is kept for human convenience only (never deployed by digest).
+          {
+            echo "tags<<EOF"
+            echo "${REPO_URI}:${GITHUB_SHA}"
+            echo "${REPO_URI}:${{ inputs.environment }}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ${{ inputs.app_path }}
+          file: ${{ inputs.app_path }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            ENV=${{ inputs.environment }}
+          # Single-platform, no provenance attestation → one clean manifest digest.
+          provenance: false
+          cache-from: type=gha,scope=${{ inputs.docker_image_name }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.docker_image_name }}
+
+      - name: Emit digest-pinned image reference
+        id: image
+        env:
+          REPO_URI: ${{ steps.meta.outputs.repo_uri }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          echo "image=${REPO_URI}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Pushed ${REPO_URI}@${DIGEST}"
