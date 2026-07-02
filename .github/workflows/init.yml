@@ -62,18 +62,54 @@ jobs:
   # "production" would silently select a non-existent GitHub Environment and bypass
   # its protection rules. The charset checks also block shell metacharacters from
   # reaching command strings downstream (defense-in-depth).
+  #
+  # Inputs are also normalized (trimmed) here: callers can pass values via YAML
+  # folded/block scalars or step outputs that carry a trailing newline/CR, e.g.
+  # "stg\n". Untrimmed, that fails validation and poisons downstream namespace/ECR/
+  # kubectl values. Downstream jobs consume the trimmed outputs, not inputs.*.
   validate-inputs:
     name: Validate inputs
     runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.normalize.outputs.environment }}
+      env_region: ${{ steps.normalize.outputs.env_region }}
+      docker_image_name: ${{ steps.normalize.outputs.docker_image_name }}
+      app_path: ${{ steps.normalize.outputs.app_path }}
+      ecr_repository: ${{ steps.normalize.outputs.ecr_repository }}
+      deployment_name: ${{ steps.normalize.outputs.deployment_name }}
+      container_name: ${{ steps.normalize.outputs.container_name }}
+      manifest_path: ${{ steps.normalize.outputs.manifest_path }}
+      namespace: ${{ steps.normalize.outputs.namespace }}
     steps:
-      - name: Validate environment / docker_image_name / app_path
+      - name: Normalize and validate inputs
+        id: normalize
         env:
           ENVIRONMENT: ${{ inputs.environment }}
+          ENV_REGION: ${{ inputs.env_region }}
           DOCKER_IMAGE_NAME: ${{ inputs.docker_image_name }}
           APP_PATH: ${{ inputs.app_path }}
+          ECR_REPOSITORY: ${{ inputs.ecr_repository }}
+          DEPLOYMENT_NAME: ${{ inputs.deployment_name }}
+          CONTAINER_NAME: ${{ inputs.container_name }}
+          MANIFEST_PATH: ${{ inputs.manifest_path }}
+          NAMESPACE: ${{ inputs.namespace }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
+
+          # Strip CR and leading/trailing whitespace (incl. newlines) that callers can
+          # introduce via YAML folded/block scalars or step outputs.
+          trim() { printf '%s' "$1" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+
+          ENVIRONMENT="$(trim "$ENVIRONMENT")"
+          ENV_REGION="$(trim "$ENV_REGION")"
+          DOCKER_IMAGE_NAME="$(trim "$DOCKER_IMAGE_NAME")"
+          APP_PATH="$(trim "$APP_PATH")"
+          ECR_REPOSITORY="$(trim "$ECR_REPOSITORY")"
+          DEPLOYMENT_NAME="$(trim "$DEPLOYMENT_NAME")"
+          CONTAINER_NAME="$(trim "$CONTAINER_NAME")"
+          MANIFEST_PATH="$(trim "$MANIFEST_PATH")"
+          NAMESPACE="$(trim "$NAMESPACE")"
 
           case "$ENVIRONMENT" in
             dev|qa|uat|stg|preprod|prod) ;;
@@ -85,6 +121,18 @@ jobs:
           printf '%s' "$APP_PATH" | grep -Eq '^[A-Za-z0-9._-][A-Za-z0-9._/-]*$' \
             || fail "app_path must match ^[A-Za-z0-9._-][A-Za-z0-9._/-]*$ (got '$APP_PATH')"
 
+          {
+            echo "environment=$ENVIRONMENT"
+            echo "env_region=$ENV_REGION"
+            echo "docker_image_name=$DOCKER_IMAGE_NAME"
+            echo "app_path=$APP_PATH"
+            echo "ecr_repository=$ECR_REPOSITORY"
+            echo "deployment_name=$DEPLOYMENT_NAME"
+            echo "container_name=$CONTAINER_NAME"
+            echo "manifest_path=$MANIFEST_PATH"
+            echo "namespace=$NAMESPACE"
+          } >> "$GITHUB_OUTPUT"
+
           echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
 
   build-and-push:
@@ -92,26 +140,26 @@ jobs:
     needs: validate-inputs
     uses: ./.github/workflows/build-ecr.yml
     with:
-      environment: ${{ inputs.environment }}
-      env_region: ${{ inputs.env_region }}
-      docker_image_name: ${{ inputs.docker_image_name }}
-      app_path: ${{ inputs.app_path }}
-      ecr_repository: ${{ inputs.ecr_repository }}
+      environment: ${{ needs.validate-inputs.outputs.environment }}
+      env_region: ${{ needs.validate-inputs.outputs.env_region }}
+      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
+      app_path: ${{ needs.validate-inputs.outputs.app_path }}
+      ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
   deploy-k8s:
     name: Deploy to Kubernetes
-    needs: build-and-push
+    needs: [validate-inputs, build-and-push]
     uses: ./.github/workflows/deploy-k8s.yml
     with:
-      environment: ${{ inputs.environment }}
-      env_region: ${{ inputs.env_region }}
-      docker_image_name: ${{ inputs.docker_image_name }}
+      environment: ${{ needs.validate-inputs.outputs.environment }}
+      env_region: ${{ needs.validate-inputs.outputs.env_region }}
+      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
       image: ${{ needs.build-and-push.outputs.image }}
-      deployment_name: ${{ inputs.deployment_name }}
-      container_name: ${{ inputs.container_name }}
-      manifest_path: ${{ inputs.manifest_path }}
-      namespace: ${{ inputs.namespace }}
+      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      container_name: ${{ needs.validate-inputs.outputs.container_name }}
+      manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
+      namespace: ${{ needs.validate-inputs.outputs.namespace }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
