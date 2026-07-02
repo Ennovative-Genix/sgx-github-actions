@@ -2,7 +2,7 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (dev, uat, prod)"
+        description: "Target environment (dev, qa, uat, stg, preprod, prod)"
         required: true
         type: string
       env_region:

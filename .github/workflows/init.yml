@@ -6,7 +6,7 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (dev, uat, prod)"
+        description: "Target environment (dev, qa, uat, stg, preprod, prod)"
         required: true
         type: string
       env_region:
@@ -76,8 +76,8 @@ jobs:
           fail() { echo "::error::$1"; exit 1; }
 
           case "$ENVIRONMENT" in
-            dev|uat|prod) ;;
-            *) fail "environment must be one of dev|uat|prod (got '$ENVIRONMENT')" ;;
+            dev|qa|uat|stg|preprod|prod) ;;
+            *) fail "environment must be one of dev|qa|uat|stg|preprod|prod (got '$ENVIRONMENT')" ;;
           esac
 
           printf '%s' "$DOCKER_IMAGE_NAME" | grep -Eq '^[a-z0-9][a-z0-9._/-]*$' \
