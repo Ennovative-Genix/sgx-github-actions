@@ -57,11 +57,10 @@ jobs:
       registry: ${{ steps.login-ecr.outputs.registry }}
 
     steps:
-      - name: Free up disk space
-        run: |
-          # Reclaim the two biggest preinstalled toolchains for build headroom.
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android || true
-          df -h /
+      # - name: Free up disk space
+      #   run: |
+      #     sudo rm -rf /usr/share/dotnet /usr/local/lib/android || true
+      #     df -h /
 
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
