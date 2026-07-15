@@ -26,7 +26,8 @@ jobs:
       environment: dev # dev, uat, or prod
       env_region: ap-south-1 # AWS region for this environment
       docker_image_name: my-app
-      app_path: packages/backend # Optional - path to app if not in repo root
+      app_path: packages/backend # Optional - path to Dockerfile if not in repo root
+      # docker_context: .               # Optional - Docker build context; defaults to app_path. Use '.' for Nx/monorepos
       # ecr_repository: my-app          # Optional - defaults to docker_image_name
       # deployment_name: my-app         # Optional - defaults to docker_image_name
       # container_name: my-app          # Optional - defaults to docker_image_name
@@ -40,10 +41,11 @@ jobs:
 
 | Name                | Required | Default             | Description                                                        |
 | ------------------- | -------- | ------------------- | ------------------------------------------------------------------ |
-| `environment`       | Yes      | -                   | Target environment (`dev`, `uat`, `prod`)                          |
+| `environment`       | Yes      | -                   | Target environment (`dev`, `qa`, `uat`, `stg`, `preprod`, `prod`)  |
 | `env_region`        | Yes      | -                   | AWS region for this environment (ECR + EKS)                        |
 | `docker_image_name` | Yes      | -                   | Image name; default ECR repo / Deployment / container name         |
-| `app_path`          | No       | `.`                 | Path to application directory (build context), relative to repo    |
+| `app_path`          | No       | `.`                 | Path to the directory containing the `Dockerfile`                  |
+| `docker_context`    | No       | `app_path`          | Docker build context. Set to `.` for Nx/monorepo root `COPY`s      |
 | `ecr_repository`    | No       | `docker_image_name` | ECR repository name                                                |
 | `deployment_name`   | No       | `docker_image_name` | Kubernetes Deployment to update                                    |
 | `container_name`    | No       | `docker_image_name` | Container within the Deployment to set the new image on            |
@@ -111,7 +113,7 @@ Set these in your repository's Settings > Secrets and variables > Actions:
 
 ### Required Files in Your Repository
 
-- `Dockerfile` in `app_path` - environment-specific logic should key off the `ENV` build arg
+- `Dockerfile` in `app_path` - environment-specific logic should key off the `ENV` build arg. For Nx/monorepos whose Dockerfile `COPY`s from the repo root, set `docker_context: '.'` (context defaults to `app_path`).
 - **Kubernetes manifests** - a `kustomize` overlay (`k8s/overlays/<environment>/kustomization.yaml`) or plain manifests (`k8s/`). Your `Deployment` should be named `docker_image_name` (or set `deployment_name`) with a container named `docker_image_name` (or set `container_name`). Define readiness/liveness probes so `rollout status` reflects real serving health.
 
 ### Application secrets

@@ -18,10 +18,15 @@ on:
         required: true
         type: string
       app_path:
-        description: "Path to the application directory (relative to repo root). Defaults to root."
+        description: "Path to the application directory containing the Dockerfile (relative to repo root). Defaults to root."
         required: false
         type: string
         default: "."
+      docker_context:
+        description: "Docker build context (relative to repo root). Defaults to app_path. Use '.' for Nx/monorepo Dockerfiles that COPY from the repo root."
+        required: false
+        type: string
+        default: ""
       ecr_repository:
         description: "ECR repository name. Defaults to docker_image_name."
         required: false
@@ -75,6 +80,7 @@ jobs:
       env_region: ${{ steps.normalize.outputs.env_region }}
       docker_image_name: ${{ steps.normalize.outputs.docker_image_name }}
       app_path: ${{ steps.normalize.outputs.app_path }}
+      docker_context: ${{ steps.normalize.outputs.docker_context }}
       ecr_repository: ${{ steps.normalize.outputs.ecr_repository }}
       deployment_name: ${{ steps.normalize.outputs.deployment_name }}
       container_name: ${{ steps.normalize.outputs.container_name }}
@@ -88,6 +94,7 @@ jobs:
           ENV_REGION: ${{ inputs.env_region }}
           DOCKER_IMAGE_NAME: ${{ inputs.docker_image_name }}
           APP_PATH: ${{ inputs.app_path }}
+          DOCKER_CONTEXT: ${{ inputs.docker_context }}
           ECR_REPOSITORY: ${{ inputs.ecr_repository }}
           DEPLOYMENT_NAME: ${{ inputs.deployment_name }}
           CONTAINER_NAME: ${{ inputs.container_name }}
@@ -105,6 +112,7 @@ jobs:
           ENV_REGION="$(trim "$ENV_REGION")"
           DOCKER_IMAGE_NAME="$(trim "$DOCKER_IMAGE_NAME")"
           APP_PATH="$(trim "$APP_PATH")"
+          DOCKER_CONTEXT="$(trim "$DOCKER_CONTEXT")"
           ECR_REPOSITORY="$(trim "$ECR_REPOSITORY")"
           DEPLOYMENT_NAME="$(trim "$DEPLOYMENT_NAME")"
           CONTAINER_NAME="$(trim "$CONTAINER_NAME")"
@@ -120,12 +128,17 @@ jobs:
             || fail "docker_image_name must match ^[a-z0-9][a-z0-9._/-]*$ (got '$DOCKER_IMAGE_NAME')"
           printf '%s' "$APP_PATH" | grep -Eq '^[A-Za-z0-9._-][A-Za-z0-9._/-]*$' \
             || fail "app_path must match ^[A-Za-z0-9._-][A-Za-z0-9._/-]*$ (got '$APP_PATH')"
+          if [ -n "$DOCKER_CONTEXT" ]; then
+            printf '%s' "$DOCKER_CONTEXT" | grep -Eq '^[A-Za-z0-9._-][A-Za-z0-9._/-]*$' \
+              || fail "docker_context must match ^[A-Za-z0-9._-][A-Za-z0-9._/-]*$ (got '$DOCKER_CONTEXT')"
+          fi
 
           {
             echo "environment=$ENVIRONMENT"
             echo "env_region=$ENV_REGION"
             echo "docker_image_name=$DOCKER_IMAGE_NAME"
             echo "app_path=$APP_PATH"
+            echo "docker_context=$DOCKER_CONTEXT"
             echo "ecr_repository=$ECR_REPOSITORY"
             echo "deployment_name=$DEPLOYMENT_NAME"
             echo "container_name=$CONTAINER_NAME"
@@ -144,6 +157,7 @@ jobs:
       env_region: ${{ needs.validate-inputs.outputs.env_region }}
       docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
       app_path: ${{ needs.validate-inputs.outputs.app_path }}
+      docker_context: ${{ needs.validate-inputs.outputs.docker_context }}
       ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
