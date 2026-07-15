@@ -55,12 +55,16 @@ jobs:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       AWS_REGION: ${{ inputs.env_region }}
       EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      # Bastion used for SSM port-forward into the private EKS API (GitHub-hosted runners are outside the VPC).
+      EKS_BASTION_INSTANCE_ID: ${{ vars.EKS_BASTION_INSTANCE_ID }}
       ENVIRONMENT: ${{ inputs.environment }}
       IMAGE: ${{ inputs.image }}
       NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
       DEPLOYMENT_NAME: ${{ inputs.deployment_name != '' && inputs.deployment_name || inputs.docker_image_name }}
       CONTAINER_NAME: ${{ inputs.container_name != '' && inputs.container_name || inputs.docker_image_name }}
       MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
+      # Local end of the SSM tunnel (remote side always targets EKS :443).
+      EKS_TUNNEL_LOCAL_PORT: '8443'
 
     steps:
       - name: Checkout repository
@@ -76,11 +80,71 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
 
+      # ── Private EKS access: SSM tunnel via bastion (BEFORE update-kubeconfig) ──
+      - name: Start SSM tunnel to private EKS API
+        run: |
+          set -euo pipefail
+
+          [ -n "$EKS_CLUSTER_NAME" ] || { echo "::error::vars.EKS_CLUSTER_NAME is not set for environment '${ENVIRONMENT}'"; exit 1; }
+          [ -n "$EKS_BASTION_INSTANCE_ID" ] || { echo "::error::vars.EKS_BASTION_INSTANCE_ID is not set for environment '${ENVIRONMENT}'"; exit 1; }
+
+          # a) Install Session Manager plugin (.deb) on the Ubuntu runner
+          curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o /tmp/session-manager-plugin.deb
+          sudo dpkg -i /tmp/session-manager-plugin.deb
+          session-manager-plugin --version
+
+          # Resolve private API hostname from the cluster (no hardcoded endpoint needed)
+          EKS_API_URL="$(aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" --query 'cluster.endpoint' --output text)"
+          EKS_API_HOST="${EKS_API_URL#https://}"
+          EKS_API_HOST="${EKS_API_HOST%%:*}"
+          [ -n "$EKS_API_HOST" ] && [ "$EKS_API_HOST" != "None" ] \
+            || { echo "::error::Could not resolve EKS API endpoint for cluster '${EKS_CLUSTER_NAME}'"; exit 1; }
+
+          echo "EKS_API_HOST=${EKS_API_HOST}" >> "$GITHUB_ENV"
+          echo "Tunneling EKS API ${EKS_API_HOST}:443 → 127.0.0.1:${EKS_TUNNEL_LOCAL_PORT} via bastion ${EKS_BASTION_INSTANCE_ID}"
+
+          # b) SSM port-forward (remote host = EKS API) in the background
+          nohup aws ssm start-session \
+            --target "$EKS_BASTION_INSTANCE_ID" \
+            --region "$AWS_REGION" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters "{\"host\":[\"${EKS_API_HOST}\"],\"portNumber\":[\"443\"],\"localPortNumber\":[\"${EKS_TUNNEL_LOCAL_PORT}\"]}" \
+            >/tmp/ssm-eks-tunnel.log 2>&1 &
+          echo $! > /tmp/ssm-eks-tunnel.pid
+
+          # c) Wait until the local tunnel port accepts connections (avoid race with kubectl)
+          echo "Waiting for SSM tunnel on 127.0.0.1:${EKS_TUNNEL_LOCAL_PORT}..."
+          for i in $(seq 1 60); do
+            if (echo >/dev/tcp/127.0.0.1/"$EKS_TUNNEL_LOCAL_PORT") >/dev/null 2>&1; then
+              echo "SSM tunnel is ready (attempt ${i})"
+              exit 0
+            fi
+            # Fail fast if the background session already died
+            if ! kill -0 "$(cat /tmp/ssm-eks-tunnel.pid)" 2>/dev/null; then
+              echo "::error::SSM port-forward process exited before the tunnel became ready"
+              cat /tmp/ssm-eks-tunnel.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "::error::Timed out waiting for SSM tunnel on port ${EKS_TUNNEL_LOCAL_PORT}"
+          cat /tmp/ssm-eks-tunnel.log || true
+          exit 1
+
       - name: Configure cluster access
         run: |
           set -euo pipefail
           [ -n "$EKS_CLUSTER_NAME" ] || { echo "::error::vars.EKS_CLUSTER_NAME is not set for environment '${ENVIRONMENT}'"; exit 1; }
           aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+
+          # Route kubectl through the SSM tunnel while keeping TLS hostname verification.
+          # /etc/hosts → real EKS hostname resolves to loopback; kubeconfig uses :8443 (local tunnel).
+          echo "127.0.0.1 ${EKS_API_HOST}" | sudo tee -a /etc/hosts >/dev/null
+          CLUSTER_ARN="$(aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" --query 'cluster.arn' --output text)"
+          kubectl config set-cluster "$CLUSTER_ARN" --server="https://${EKS_API_HOST}:${EKS_TUNNEL_LOCAL_PORT}"
+
           kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
           echo "Cluster: ${EKS_CLUSTER_NAME}  Namespace: ${NAMESPACE}"
 

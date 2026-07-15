@@ -99,9 +99,12 @@ Deploys the image to EKS over `kubectl`:
 
 Set these in your repository's Settings > Environments > [environment] > Environment variables:
 
-| Variable           | Required | Description                                  |
-| ------------------ | -------- | -------------------------------------------- |
-| `EKS_CLUSTER_NAME` | Yes      | Target EKS cluster name for this environment |
+| Variable                  | Required | Description                                                                  |
+| ------------------------- | -------- | ---------------------------------------------------------------------------- |
+| `EKS_CLUSTER_NAME`        | Yes      | Target EKS cluster name for this environment                                 |
+| `EKS_BASTION_INSTANCE_ID` | Yes*     | Bastion EC2 instance ID for SSM port-forward to a **private** EKS API (`i-…`) |
+
+\*Required when the EKS API endpoint is private (not reachable from GitHub-hosted runners).
 
 ### Secrets
 
@@ -134,8 +137,9 @@ The region is passed explicitly per call via the **`env_region`** input, used by
 2. **IAM Role** (assumed via OIDC by CI) with permissions for:
    - ECR (push/pull to the app repository)
    - EKS (`eks:DescribeCluster`) plus an **EKS access entry** granting edit on the target namespace
+   - For **private EKS**: SSM Session Manager to the bastion (`ssm:StartSession` on the bastion instance + document `AWS-StartPortForwardingSessionToRemoteHost`; typically also `ssm:TerminateSession`). Bastion must be SSM-managed (`AmazonSSMManagedInstanceCore`) and able to reach the EKS API on `:443` inside the VPC.
 3. **Amazon ECR repository** for the image (per region)
-4. **EKS cluster** for the environment, with the target namespace (auto-created if missing); set `EKS_CLUSTER_NAME` per environment
+4. **EKS cluster** for the environment, with the target namespace (auto-created if missing); set `EKS_CLUSTER_NAME` (and `EKS_BASTION_INSTANCE_ID` if private) per environment
 5. **IRSA / Pod Identity** for the app's ServiceAccount if the app reads secrets at runtime (e.g. `secretsmanager:GetSecretValue`)
 6. **GitHub Environments** `dev`/`uat`/`prod` created in each consumer repo (so environment protection rules and the OIDC `environment` claim apply)
 
