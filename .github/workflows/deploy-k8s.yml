@@ -186,28 +186,40 @@ jobs:
           command -v jq >/dev/null 2>&1 || { sudo apt-get update -y && sudo apt-get install -y jq; }
 
           echo "Syncing Secrets Manager ARN (region=${SECRET_REGION}) → Secret/${K8S_NAME} in namespace ${NAMESPACE}"
-          SECRET_JSON="$(aws secretsmanager get-secret-value \
+          SECRET_STRING="$(aws secretsmanager get-secret-value \
             --secret-id "$SECRET_ARN" \
             --region "$SECRET_REGION" \
             --query SecretString \
             --output text)"
 
-          # Expect JSON object of env key/value pairs. Never print secret values.
-          if ! echo "$SECRET_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
-            echo "::error::SecretString must be a JSON object of env key/value pairs"
-            exit 1
-          fi
-
           ENV_FILE="$(mktemp)"
           trap 'rm -f "$ENV_FILE"' EXIT
-          echo "$SECRET_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value|tostring)"' > "$ENV_FILE"
+
+          # Support: (1) JSON object {"KEY":"val",...}  (2) dotenv plaintext KEY=val lines.
+          # Never print secret values.
+          if echo "$SECRET_STRING" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "$SECRET_STRING" | jq -r 'to_entries[] | "\(.key)=\(.value|tostring)"' > "$ENV_FILE"
+            echo "SecretString format: JSON object"
+          else
+            # Strip UTF-8 BOM / CR; keep KEY=VALUE lines (and blank/# comments for kubectl).
+            printf '%s\n' "$SECRET_STRING" | tr -d '\r' | sed '1s/^\xEF\xBB\xBF//' > "$ENV_FILE"
+            # At least one env assignment required (NAME=...); reject raw single values with no key.
+            if ! grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE"; then
+              echo "::error::SecretString must be a JSON object of env key/value pairs, or dotenv plaintext (e.g. MONGO_URI=...)."
+              echo "::error::A single raw value with no KEY= is not supported — wrap it as MONGO_URI=<value> (or convert the SM secret to JSON)."
+              exit 1
+            fi
+            echo "SecretString format: dotenv plaintext"
+          fi
+
+          KEY_COUNT="$(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" || true)"
 
           kubectl create secret generic "$K8S_NAME" \
             --namespace "$NAMESPACE" \
             --from-env-file="$ENV_FILE" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          echo "✓ Kubernetes Secret/${K8S_NAME} synced (keys not logged)"
+          echo "✓ Kubernetes Secret/${K8S_NAME} synced (${KEY_COUNT} key(s); values not logged)"
 
       - name: Resolve manifest path
         id: manifests

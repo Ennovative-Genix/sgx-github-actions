@@ -128,7 +128,13 @@ Set these in your repository's Settings > Environments > [environment] > Environ
 
 \*Pass explicitly: `secrets: { AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }} }`. If the caller job cannot resolve Environment secrets (no `environment:` with `uses:`), also add the same ARN as a **Repository** secret or Environment **variable**.
 
-When `aws_secret_arn` / `secrets.AWS_SECRET_ARN` / `vars.AWS_SECRET_ARN` is set, deploy syncs that **AWS Secrets Manager** secret (JSON key/value) into a **Kubernetes Secret** named `nova-server-secrets` by default before applying manifests. Your Deployment should use `envFrom.secretRef` with that name so pods receive the values at startup.
+When `aws_secret_arn` / `secrets.AWS_SECRET_ARN` / `vars.AWS_SECRET_ARN` is set, deploy syncs that **AWS Secrets Manager** secret into a **Kubernetes Secret** named `nova-server-secrets` by default before applying manifests. Your Deployment should use `envFrom.secretRef` with that name so pods receive the values at startup.
+
+**Supported SecretString formats:**
+- JSON object: `{"MONGO_URI":"...","JWT_SECRET":"..."}`
+- Dotenv plaintext: `MONGO_URI=...` / `JWT_SECRET=...` (one `KEY=value` per line)
+
+A single raw value with no `KEY=` is not supported — use `MONGO_URI=<connection-string>` (or JSON).
 
 ### Required Files in Your Repository
 
