@@ -101,20 +101,19 @@ jobs:
           set -euo pipefail
           REPO_URI="${REGISTRY}/${ECR_REPOSITORY}"
           echo "repo_uri=${REPO_URI}" >> "$GITHUB_OUTPUT"
-          # Unique per workflow run/attempt so re-runs of the same commit work with
-          # ECR tag immutability (a bare :<git-sha> cannot be overwritten once pushed).
-          # Optionally also tag :<environment> when push_environment_tag=true
-          # (requires a mutable ECR repository). Deploy uses digest, not these tags.
-          IMAGE_TAG="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Always tag with the unique git SHA (works with ECR tag immutability).
+          # Optionally also tag :<environment> when the consumer opts in via
+          # push_environment_tag=true (requires a mutable ECR repository).
+          # Deploy always uses the digest-pinned reference, not these tags.
           {
             echo "tags<<EOF"
-            echo "${REPO_URI}:${IMAGE_TAG}"
+            echo "${REPO_URI}:${GITHUB_SHA}"
             if [ "${PUSH_ENVIRONMENT_TAG}" = "true" ]; then
               echo "${REPO_URI}:${ENVIRONMENT}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "Image tag=${IMAGE_TAG} push_environment_tag=${PUSH_ENVIRONMENT_TAG}"
+          echo "Image tags: SHA=${GITHUB_SHA} push_environment_tag=${PUSH_ENVIRONMENT_TAG}"
 
       - name: Resolve Docker context
         id: docker
