@@ -33,11 +33,11 @@ jobs:
       # container_name: my-app          # Optional - defaults to docker_image_name
       # manifest_path: k8s/overlays/dev # Optional - auto-detected if omitted
       # namespace: dev                  # Optional - defaults to environment
-      # aws_secret_arn: ...   # Optional — prefer Environment secret AWS_SECRET_ARN
+      # aws_secret_arn: ...            # Optional override (prefer passing secret below)
       # k8s_secret_name: nova-server-secrets
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      # AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}  # Environment secret (optional)
+      AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}  # Environment secret — pass explicitly
 ```
 
 **Inputs:**
@@ -54,20 +54,19 @@ jobs:
 | `container_name`    | No       | `docker_image_name`   | Container within the Deployment to set the new image on            |
 | `manifest_path`     | No       | _auto_                | kustomize dir or plain manifests in your repo (see below)          |
 | `namespace`         | No       | `environment`         | Kubernetes namespace to deploy into                                |
-| `aws_secret_arn`    | No       | _(empty)_             | Optional override; prefer Environment secret `AWS_SECRET_ARN`      |
+| `aws_secret_arn`    | No       | _(empty)_             | Optional ARN override; prefer `secrets.AWS_SECRET_ARN`             |
 | `k8s_secret_name`   | No       | `nova-server-secrets` | Kubernetes Secret name (must match Deployment `envFrom`)           |
 
 **Secrets:**
 
-| Name           | Required | Description                                                                 |
-| -------------- | -------- | --------------------------------------------------------------------------- |
-| `IAM_ROLE_ARN` | Yes      | AWS IAM Role ARN for OIDC (ECR push + EKS access)                           |
+| Name             | Required | Description                                                                 |
+| ---------------- | -------- | --------------------------------------------------------------------------- |
+| `IAM_ROLE_ARN`   | Yes      | AWS IAM Role ARN for OIDC (ECR push + EKS access)                           |
+| `AWS_SECRET_ARN` | No*      | Secrets Manager ARN; pass from caller Environment secret into this workflow |
 
-Also set on the **caller** GitHub Environment (as an Environment **secret**):
+\*Required when the Deployment uses `envFrom` with the synced Kubernetes Secret. Nested reusable workflows do **not** auto-expose Environment secrets — pass `AWS_SECRET_ARN` explicitly (same pattern as `IAM_ROLE_ARN`). Do not put `environment:` on the caller job that uses this workflow (`uses:` + `environment:` is invalid).
 
-| Name             | Required | Description                                              |
-| ---------------- | -------- | -------------------------------------------------------- |
-| `AWS_SECRET_ARN` | No*      | Secrets Manager ARN; read by deploy job via `environment` |
+Resolution order in deploy: `inputs.aws_secret_arn` → `secrets.AWS_SECRET_ARN` → `vars.AWS_SECRET_ARN`.
 
 **Pipeline Steps:**
 
@@ -114,18 +113,22 @@ Set these in your repository's Settings > Environments > [environment] > Environ
 | ------------------------- | -------- | ---------------------------------------------------------------------------- |
 | `EKS_CLUSTER_NAME`        | Yes      | Target EKS cluster name for this environment                                 |
 | `EKS_BASTION_INSTANCE_ID` | Yes*     | Bastion EC2 instance ID for SSM port-forward to a **private** EKS API (`i-…`) |
-| `AWS_SECRET_ARN`          | No*      | Full Secrets Manager ARN (Environment **secret**) to sync into the cluster   |
+| `AWS_SECRET_ARN`          | No       | Optional fallback ARN if not passed as a secret (same value as the secret)   |
 
-\*Required when the EKS API endpoint is private (not reachable from GitHub-hosted runners).  
-\*Set Environment **secret** `AWS_SECRET_ARN` on the caller repo (e.g. `stg`). The deploy job in this reusable workflow uses `environment: <inputs.environment>`, so it can read that secret. Do not put `environment:` on the caller job that uses this workflow (`uses:` + `environment:` is invalid YAML for reusable workflow calls).
+\*Required when the EKS API endpoint is private (not reachable from GitHub-hosted runners).
 
-When workflow input `aws_secret_arn` is empty, deploy uses `secrets.AWS_SECRET_ARN` from the caller's matching GitHub Environment.### Secrets
+### Secrets
 
-Set these in your repository's Settings > Secrets and variables > Actions:
+Set these in your repository's Settings > Environments > [environment] > Environment secrets (and pass them into `init.yml`):
 
-| Secret         | Required | Description                                                  |
-| -------------- | -------- | ------------------------------------------------------------ |
-| `IAM_ROLE_ARN` | Yes      | AWS IAM Role ARN for OIDC (ECR push + `eks:DescribeCluster`) |
+| Secret           | Required | Description                                                  |
+| ---------------- | -------- | ------------------------------------------------------------ |
+| `IAM_ROLE_ARN`   | Yes      | AWS IAM Role ARN for OIDC (ECR push + `eks:DescribeCluster`) |
+| `AWS_SECRET_ARN` | No*      | Full Secrets Manager ARN to sync into the cluster            |
+
+\*Pass explicitly: `secrets: { AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }} }`. If the caller job cannot resolve Environment secrets (no `environment:` with `uses:`), also add the same ARN as a **Repository** secret or Environment **variable**.
+
+When `aws_secret_arn` / `secrets.AWS_SECRET_ARN` / `vars.AWS_SECRET_ARN` is set, deploy syncs that **AWS Secrets Manager** secret (JSON key/value) into a **Kubernetes Secret** named `nova-server-secrets` by default before applying manifests. Your Deployment should use `envFrom.secretRef` with that name so pods receive the values at startup.
 
 ### Required Files in Your Repository
 
@@ -134,10 +137,7 @@ Set these in your repository's Settings > Secrets and variables > Actions:
 
 ### Application secrets
 
-When `aws_secret_arn` / `secrets.AWS_SECRET_ARN` is set, deploy syncs that **AWS Secrets Manager** secret (JSON key/value) into a **Kubernetes Secret** named `nova-server-secrets` by default before applying manifests. Your Deployment should use `envFrom.secretRef` with that name so pods receive the values at startup.
-
-- Store the ARN as a GitHub **Environment secret** (not a variable) so it is masked in the UI/logs.
-- Region is taken from the ARN (e.g. EKS in `us-east-1`, secret ARN in `ap-south-1` works).
+- Pass `AWS_SECRET_ARN` into `init.yml` (see Secrets table above); region is parsed from the ARN (EKS and the secret may differ, e.g. `us-east-1` / `ap-south-1`).
 - The CI IAM role needs `secretsmanager:GetSecretValue` on that ARN.
 - Secret payload values are never logged.
 

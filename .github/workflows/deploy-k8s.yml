@@ -51,6 +51,9 @@ on:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs eks:DescribeCluster + an EKS access entry)"
         required: true
+      AWS_SECRET_ARN:
+        description: "Optional Secrets Manager ARN to sync into a Kubernetes Secret before apply. Must be passed explicitly (nested reusable workflows do not auto-expose Environment secrets)."
+        required: false
 
 jobs:
   deploy:
@@ -75,9 +78,10 @@ jobs:
       MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
       # Local end of the SSM tunnel (remote side always targets EKS :443).
       EKS_TUNNEL_LOCAL_PORT: '8443'
-      # Prefer workflow input; else read Environment secret AWS_SECRET_ARN from the
-      # caller repo (this job sets environment: ${{ inputs.environment }}).
-      AWS_SECRET_ARN: ${{ inputs.aws_secret_arn != '' && inputs.aws_secret_arn || secrets.AWS_SECRET_ARN }}
+      # Resolve Secrets Manager ARN: input override → passed secret → Environment var.
+      # Reusable workflows only see secrets that were declared + passed (or inherit);
+      # environment: alone does not populate undeclared secrets.AWS_SECRET_ARN.
+      AWS_SECRET_ARN: ${{ inputs.aws_secret_arn != '' && inputs.aws_secret_arn || secrets.AWS_SECRET_ARN || vars.AWS_SECRET_ARN }}
       K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
 
     steps:
