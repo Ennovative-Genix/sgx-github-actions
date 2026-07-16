@@ -37,10 +37,23 @@ on:
         required: false
         type: string
         default: ""
+      aws_secret_arn:
+        description: "Optional AWS Secrets Manager secret ARN. When set (or secrets.AWS_SECRET_ARN), CI syncs it into a Kubernetes Secret before apply. Region is parsed from the ARN."
+        required: false
+        type: string
+        default: ""
+      k8s_secret_name:
+        description: "Kubernetes Secret name to create/update. Defaults to nova-server-secrets (must match Deployment envFrom)."
+        required: false
+        type: string
+        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs eks:DescribeCluster + an EKS access entry)"
         required: true
+      AWS_SECRET_ARN:
+        description: "Optional AWS Secrets Manager secret ARN to sync into a Kubernetes Secret before apply"
+        required: false
 
 jobs:
   deploy:
@@ -65,6 +78,9 @@ jobs:
       MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
       # Local end of the SSM tunnel (remote side always targets EKS :443).
       EKS_TUNNEL_LOCAL_PORT: '8443'
+      # Prefer workflow input; fall back to environment secret AWS_SECRET_ARN.
+      AWS_SECRET_ARN: ${{ inputs.aws_secret_arn != '' && inputs.aws_secret_arn || secrets.AWS_SECRET_ARN }}
+      K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
 
     steps:
       - name: Checkout repository
@@ -147,6 +163,49 @@ jobs:
 
           kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
           echo "Cluster: ${EKS_CLUSTER_NAME}  Namespace: ${NAMESPACE}"
+
+      - name: Sync app secret from AWS Secrets Manager
+        if: ${{ env.AWS_SECRET_ARN != '' }}
+        run: |
+          set -euo pipefail
+          SECRET_ARN="$(printf '%s' "$AWS_SECRET_ARN" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          K8S_NAME="$(printf '%s' "${K8S_SECRET_NAME:-nova-server-secrets}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+          # Expect: arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME
+          if ! printf '%s' "$SECRET_ARN" | grep -Eq '^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+'; then
+            echo "::error::AWS_SECRET_ARN must be a Secrets Manager ARN (got '${SECRET_ARN}')"
+            exit 1
+          fi
+
+          SECRET_REGION="$(printf '%s' "$SECRET_ARN" | cut -d: -f4)"
+          [ -n "$SECRET_REGION" ] || { echo "::error::Could not parse region from AWS_SECRET_ARN"; exit 1; }
+          [ -n "$K8S_NAME" ] || { echo "::error::K8S_SECRET_NAME resolved empty"; exit 1; }
+
+          command -v jq >/dev/null 2>&1 || { sudo apt-get update -y && sudo apt-get install -y jq; }
+
+          echo "Syncing Secrets Manager ARN (region=${SECRET_REGION}) → Secret/${K8S_NAME} in namespace ${NAMESPACE}"
+          SECRET_JSON="$(aws secretsmanager get-secret-value \
+            --secret-id "$SECRET_ARN" \
+            --region "$SECRET_REGION" \
+            --query SecretString \
+            --output text)"
+
+          # Expect JSON object of env key/value pairs. Never print secret values.
+          if ! echo "$SECRET_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "::error::SecretString must be a JSON object of env key/value pairs"
+            exit 1
+          fi
+
+          ENV_FILE="$(mktemp)"
+          trap 'rm -f "$ENV_FILE"' EXIT
+          echo "$SECRET_JSON" | jq -r 'to_entries[] | "\(.key)=\(.value|tostring)"' > "$ENV_FILE"
+
+          kubectl create secret generic "$K8S_NAME" \
+            --namespace "$NAMESPACE" \
+            --from-env-file="$ENV_FILE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "✓ Kubernetes Secret/${K8S_NAME} synced (keys not logged)"
 
       - name: Resolve manifest path
         id: manifests

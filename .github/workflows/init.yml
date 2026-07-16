@@ -52,10 +52,23 @@ on:
         required: false
         type: string
         default: ""
+      aws_secret_arn:
+        description: "Optional AWS Secrets Manager secret ARN. When set (or vars.AWS_SECRET_ARN), CI syncs it into a Kubernetes Secret. Region is parsed from the ARN."
+        required: false
+        type: string
+        default: ""
+      k8s_secret_name:
+        description: "Kubernetes Secret name to create/update. Defaults to nova-server-secrets."
+        required: false
+        type: string
+        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
         required: true
+      AWS_SECRET_ARN:
+        description: "Optional AWS Secrets Manager secret ARN (GitHub Environment secret). Region is parsed from the ARN."
+        required: false
 
 concurrency:
   group: deploy-${{ inputs.environment }}-${{ inputs.docker_image_name }}
@@ -86,6 +99,8 @@ jobs:
       container_name: ${{ steps.normalize.outputs.container_name }}
       manifest_path: ${{ steps.normalize.outputs.manifest_path }}
       namespace: ${{ steps.normalize.outputs.namespace }}
+      aws_secret_arn: ${{ steps.normalize.outputs.aws_secret_arn }}
+      k8s_secret_name: ${{ steps.normalize.outputs.k8s_secret_name }}
     steps:
       - name: Normalize and validate inputs
         id: normalize
@@ -100,6 +115,8 @@ jobs:
           CONTAINER_NAME: ${{ inputs.container_name }}
           MANIFEST_PATH: ${{ inputs.manifest_path }}
           NAMESPACE: ${{ inputs.namespace }}
+          AWS_SECRET_ARN: ${{ inputs.aws_secret_arn }}
+          K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -118,6 +135,8 @@ jobs:
           CONTAINER_NAME="$(trim "$CONTAINER_NAME")"
           MANIFEST_PATH="$(trim "$MANIFEST_PATH")"
           NAMESPACE="$(trim "$NAMESPACE")"
+          AWS_SECRET_ARN="$(trim "$AWS_SECRET_ARN")"
+          K8S_SECRET_NAME="$(trim "$K8S_SECRET_NAME")"
 
           case "$ENVIRONMENT" in
             dev|qa|uat|stg|preprod|prod) ;;
@@ -132,6 +151,14 @@ jobs:
             printf '%s' "$DOCKER_CONTEXT" | grep -Eq '^[A-Za-z0-9._-][A-Za-z0-9._/-]*$' \
               || fail "docker_context must match ^[A-Za-z0-9._-][A-Za-z0-9._/-]*$ (got '$DOCKER_CONTEXT')"
           fi
+          if [ -n "$AWS_SECRET_ARN" ]; then
+            printf '%s' "$AWS_SECRET_ARN" | grep -Eq '^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+' \
+              || fail "aws_secret_arn must be a Secrets Manager ARN (got '$AWS_SECRET_ARN')"
+          fi
+          if [ -n "$K8S_SECRET_NAME" ]; then
+            printf '%s' "$K8S_SECRET_NAME" | grep -Eq '^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$' \
+              || fail "k8s_secret_name must be a valid DNS subdomain label (got '$K8S_SECRET_NAME')"
+          fi
 
           {
             echo "environment=$ENVIRONMENT"
@@ -144,6 +171,8 @@ jobs:
             echo "container_name=$CONTAINER_NAME"
             echo "manifest_path=$MANIFEST_PATH"
             echo "namespace=$NAMESPACE"
+            echo "aws_secret_arn=$AWS_SECRET_ARN"
+            echo "k8s_secret_name=$K8S_SECRET_NAME"
           } >> "$GITHUB_OUTPUT"
 
           echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
@@ -175,5 +204,8 @@ jobs:
       container_name: ${{ needs.validate-inputs.outputs.container_name }}
       manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
+      aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
+      k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
