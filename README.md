@@ -132,9 +132,9 @@ When `aws_secret_arn` / `secrets.AWS_SECRET_ARN` / `vars.AWS_SECRET_ARN` is set,
 
 **Supported SecretString formats:**
 - JSON object: `{"MONGO_URI":"...","JWT_SECRET":"..."}`
-- Dotenv plaintext: `MONGO_URI=...` / `JWT_SECRET=...` (one `KEY=value` per line)
+- Dotenv / properties plaintext: `MONGO_URI=...` or legacy `CLOUDWATCH_LOG_GROUP:/aws/...` (`KEY:value` is normalized to `KEY=value` for Kubernetes)
 
-A single raw value with no `KEY=` is not supported — use `MONGO_URI=<connection-string>` (or JSON).
+A single raw value with no key is not supported.
 
 ### Required Files in Your Repository
 

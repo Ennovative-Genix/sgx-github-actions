@@ -195,24 +195,51 @@ jobs:
           ENV_FILE="$(mktemp)"
           trap 'rm -f "$ENV_FILE"' EXIT
 
-          # Support: (1) JSON object {"KEY":"val",...}  (2) dotenv plaintext KEY=val lines.
+          # Support: (1) JSON object {"KEY":"val",...}  (2) dotenv / properties plaintext.
           # Never print secret values.
           if echo "$SECRET_STRING" | jq -e 'type == "object"' >/dev/null 2>&1; then
             echo "$SECRET_STRING" | jq -r 'to_entries[] | "\(.key)=\(.value|tostring)"' > "$ENV_FILE"
             echo "SecretString format: JSON object"
           else
-            # Strip UTF-8 BOM / CR; keep KEY=VALUE lines (and blank/# comments for kubectl).
-            printf '%s\n' "$SECRET_STRING" | tr -d '\r' | sed '1s/^\xEF\xBB\xBF//' > "$ENV_FILE"
-            # At least one env assignment required (NAME=...); reject raw single values with no key.
-            if ! grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE"; then
-              echo "::error::SecretString must be a JSON object of env key/value pairs, or dotenv plaintext (e.g. MONGO_URI=...)."
-              echo "::error::A single raw value with no KEY= is not supported — wrap it as MONGO_URI=<value> (or convert the SM secret to JSON)."
+            # Strip BOM/CR, then normalize KEY:value (common in EC2/legacy secrets) → KEY=value.
+            # Only the first separator after the key name is converted; values may contain ':' (URLs, ARNs).
+            NORMALIZED="$(mktemp)"
+            printf '%s\n' "$SECRET_STRING" | tr -d '\r' | sed '1s/^\xEF\xBB\xBF//' | awk '
+              /^[[:space:]]*$/ { next }
+              /^[[:space:]]*#/ { next }
+              # Already KEY=VALUE (keep as-is, trim leading space)
+              /^[[:space:]]*[A-Za-z_][A-Za-z0-9_.-]*[[:space:]]*=/ {
+                sub(/^[[:space:]]+/, "", $0)
+                print
+                next
+              }
+              # KEY: VALUE or KEY:VALUE → KEY=VALUE (legacy / Java-properties style)
+              /^[[:space:]]*[A-Za-z_][A-Za-z0-9_.-]*[[:space:]]*:/ {
+                sub(/^[[:space:]]+/, "", $0)
+                # split on first colon only
+                key = $0
+                sub(/[[:space:]]*:.*$/, "", key)
+                val = $0
+                sub(/^[^:]*:[[:space:]]*/, "", val)
+                print key "=" val
+                next
+              }
+              {
+                print "::warning::Skipping unrecognized secret line (need KEY=value or KEY: value)" > "/dev/stderr"
+              }
+            ' > "$NORMALIZED"
+            mv "$NORMALIZED" "$ENV_FILE"
+
+            if ! grep -Eq '^[A-Za-z_][A-Za-z0-9_.-]*=' "$ENV_FILE"; then
+              echo "::error::SecretString must be a JSON object, or plaintext KEY=value / KEY: value lines (e.g. MONGO_URI=... or CLOUDWATCH_LOG_GROUP:/aws/...)."
+              echo "::error::A single raw value with no key is not supported."
               exit 1
             fi
-            echo "SecretString format: dotenv plaintext"
+            echo "SecretString format: dotenv/properties plaintext (normalized to KEY=value)"
           fi
 
-          KEY_COUNT="$(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" || true)"
+          KEY_COUNT="$(grep -cE '^[A-Za-z_][A-Za-z0-9_.-]*=' "$ENV_FILE" || true)"
+          [ "$KEY_COUNT" -gt 0 ] || { echo "::error::No valid KEY=value entries after normalizing SecretString"; exit 1; }
 
           kubectl create secret generic "$K8S_NAME" \
             --namespace "$NAMESPACE" \
