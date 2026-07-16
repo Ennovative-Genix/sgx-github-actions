@@ -32,6 +32,11 @@ on:
         required: false
         type: string
         default: ""
+      push_environment_tag:
+        description: "Also tag the image as :<environment>. Set true only if the ECR repo allows mutable tags. Default false (safe for immutable ECR)."
+        required: false
+        type: boolean
+        default: false
       deployment_name:
         description: "Kubernetes Deployment name. Defaults to docker_image_name."
         required: false
@@ -159,6 +164,7 @@ jobs:
       app_path: ${{ needs.validate-inputs.outputs.app_path }}
       docker_context: ${{ needs.validate-inputs.outputs.docker_context }}
       ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
+      push_environment_tag: ${{ inputs.push_environment_tag }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 

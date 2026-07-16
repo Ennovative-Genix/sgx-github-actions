@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: ""
+      push_environment_tag:
+        description: "Also tag the image as :<environment> (from the environment input). Set true only if the ECR repo allows mutable tags. Default false (safe for immutable ECR)."
+        required: false
+        type: boolean
+        default: false
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs ECR push)"
@@ -90,18 +95,25 @@ jobs:
         id: meta
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          PUSH_ENVIRONMENT_TAG: ${{ inputs.push_environment_tag }}
         run: |
           set -euo pipefail
           REPO_URI="${REGISTRY}/${ECR_REPOSITORY}"
           echo "repo_uri=${REPO_URI}" >> "$GITHUB_OUTPUT"
-          # Immutable per-commit tag is the deploy handle; a moving <environment>
-          # tag is kept for human convenience only (never deployed by digest).
+          # Always tag with the unique git SHA (works with ECR tag immutability).
+          # Optionally also tag :<environment> when the consumer opts in via
+          # push_environment_tag=true (requires a mutable ECR repository).
+          # Deploy always uses the digest-pinned reference, not these tags.
           {
             echo "tags<<EOF"
             echo "${REPO_URI}:${GITHUB_SHA}"
-            echo "${REPO_URI}:${{ inputs.environment }}"
+            if [ "${PUSH_ENVIRONMENT_TAG}" = "true" ]; then
+              echo "${REPO_URI}:${ENVIRONMENT}"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+          echo "Image tags: SHA=${GITHUB_SHA} push_environment_tag=${PUSH_ENVIRONMENT_TAG}"
 
       - name: Resolve Docker context
         id: docker
