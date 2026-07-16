@@ -63,7 +63,7 @@ jobs:
 **Pipeline Steps:**
 
 1. **Validate inputs** - Fails closed before any AWS credentials are assumed if `environment` isn't `dev`/`uat`/`prod` or `docker_image_name`/`app_path` contain unexpected characters.
-2. **Build and Push to ECR** (`build-ecr.yml`) - OIDC → ECR login → Buildx build (with `ENV=<environment>` build arg and a `type=gha` layer cache) → `docker push`. Always tags `:<git-sha>`; optionally also `:<environment>` when `push_environment_tag: true`. Deploy uses the digest-pinned image reference.
+2. **Build and Push to ECR** (`build-ecr.yml`) - OIDC → ECR login → Buildx build (with `ENV=<environment>` build arg and a `type=gha` layer cache) → `docker push`. Tags `:<git-sha>-<run_id>-<run_attempt>` (unique per run; safe with ECR tag immutability). Optionally also `:<environment>` when `push_environment_tag: true`. Deploy uses the digest-pinned image reference.
 3. **Deploy to Kubernetes** (`deploy-k8s.yml`) - OIDC → `aws eks update-kubeconfig` → `kubectl apply` your manifests → `kubectl set image` (digest-pinned) → `kubectl rollout status` with **automatic rollback** to the previous revision on failure.
 
 > Runs are serialized per `environment` + `docker_image_name` via a `concurrency` group, so two deploys to the same target won't race.
@@ -80,7 +80,7 @@ Builds a Docker image (Buildx + GitHub Actions layer cache) and pushes it to Ama
 
 - Builds with `ENV=<environment>` passed as a build arg; any environment-specific build logic lives inside your `Dockerfile`
 - Layer cache is keyed by `docker_image_name` (`type=gha` scope), so unchanged layers are reused across runs
-- Always pushes `:<git-sha>` (works with ECR immutable tags)
+- Always pushes `:<git-sha>-<run_id>-<run_attempt>` (unique per workflow run/attempt; works with ECR immutable tags and re-runs of the same commit)
 - Optionally also pushes `:<environment>` when `push_environment_tag: true` (requires mutable ECR tags)
 - Outputs a **digest-pinned** image reference (`repo@sha256:…`) consumed by the deploy step
 
