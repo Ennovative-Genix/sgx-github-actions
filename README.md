@@ -62,7 +62,12 @@ jobs:
 | Name           | Required | Description                                                                 |
 | -------------- | -------- | --------------------------------------------------------------------------- |
 | `IAM_ROLE_ARN` | Yes      | AWS IAM Role ARN for OIDC (ECR push + EKS access)                           |
-| `AWS_SECRET_ARN` | No     | Secrets Manager secret ARN (Environment secret; region parsed from ARN)     |
+
+Also set on the **caller** GitHub Environment (as an Environment **secret**):
+
+| Name             | Required | Description                                              |
+| ---------------- | -------- | -------------------------------------------------------- |
+| `AWS_SECRET_ARN` | No*      | Secrets Manager ARN; read by deploy job via `environment` |
 
 **Pipeline Steps:**
 
@@ -112,9 +117,9 @@ Set these in your repository's Settings > Environments > [environment] > Environ
 | `AWS_SECRET_ARN`          | No*      | Full Secrets Manager ARN (Environment **secret**) to sync into the cluster   |
 
 \*Required when the EKS API endpoint is private (not reachable from GitHub-hosted runners).  
-\*Set Environment secret `AWS_SECRET_ARN` when the app Deployment uses `envFrom` and you want CI to sync from Secrets Manager. Optional input `k8s_secret_name` defaults to `nova-server-secrets`.
+\*Set Environment **secret** `AWS_SECRET_ARN` on the caller repo (e.g. `stg`). The deploy job in this reusable workflow uses `environment: <inputs.environment>`, so it can read that secret. Do not put `environment:` on the caller job that uses this workflow (`uses:` + `environment:` is invalid YAML for reusable workflow calls).
 
-When workflow input `aws_secret_arn` is empty, deploy uses `secrets.AWS_SECRET_ARN` from the GitHub Environment (passed through from the caller).### Secrets
+When workflow input `aws_secret_arn` is empty, deploy uses `secrets.AWS_SECRET_ARN` from the caller's matching GitHub Environment.### Secrets
 
 Set these in your repository's Settings > Secrets and variables > Actions:
 

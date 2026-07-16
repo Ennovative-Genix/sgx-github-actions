@@ -66,9 +66,6 @@ on:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
         required: true
-      AWS_SECRET_ARN:
-        description: "Optional AWS Secrets Manager secret ARN (GitHub Environment secret). Region is parsed from the ARN."
-        required: false
 
 concurrency:
   group: deploy-${{ inputs.environment }}-${{ inputs.docker_image_name }}
@@ -208,4 +205,3 @@ jobs:
       k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
