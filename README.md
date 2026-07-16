@@ -29,7 +29,6 @@ jobs:
       app_path: packages/backend # Optional - path to Dockerfile if not in repo root
       # docker_context: .               # Optional - Docker build context; defaults to app_path. Use '.' for Nx/monorepos
       # ecr_repository: my-app          # Optional - defaults to docker_image_name
-      # push_environment_tag: false     # Optional - also tag :<environment>; only if ECR tags are mutable
       # deployment_name: my-app         # Optional - defaults to docker_image_name
       # container_name: my-app          # Optional - defaults to docker_image_name
       # manifest_path: k8s/overlays/dev # Optional - auto-detected if omitted
@@ -40,19 +39,18 @@ jobs:
 
 **Inputs:**
 
-| Name                    | Required | Default             | Description                                                                 |
-| ----------------------- | -------- | ------------------- | --------------------------------------------------------------------------- |
-| `environment`           | Yes      | -                   | Target environment (`dev`, `qa`, `uat`, `stg`, `preprod`, `prod`)           |
-| `env_region`            | Yes      | -                   | AWS region for this environment (ECR + EKS)                                 |
-| `docker_image_name`     | Yes      | -                   | Image name; default ECR repo / Deployment / container name                  |
-| `app_path`              | No       | `.`                 | Path to the directory containing the `Dockerfile`                           |
-| `docker_context`        | No       | `app_path`          | Docker build context. Set to `.` for Nx/monorepo root `COPY`s               |
-| `ecr_repository`        | No       | `docker_image_name` | ECR repository name                                                         |
-| `push_environment_tag`  | No       | `false`             | Also push `:<environment>`. Use `true` only if ECR tag immutability is off  |
-| `deployment_name`       | No       | `docker_image_name` | Kubernetes Deployment to update                                             |
-| `container_name`        | No       | `docker_image_name` | Container within the Deployment to set the new image on                     |
-| `manifest_path`         | No       | _auto_              | kustomize dir or plain manifests in your repo (see below)                   |
-| `namespace`             | No       | `environment`       | Kubernetes namespace to deploy into                                         |
+| Name                | Required | Default             | Description                                                        |
+| ------------------- | -------- | ------------------- | ------------------------------------------------------------------ |
+| `environment`       | Yes      | -                   | Target environment (`dev`, `qa`, `uat`, `stg`, `preprod`, `prod`)  |
+| `env_region`        | Yes      | -                   | AWS region for this environment (ECR + EKS)                        |
+| `docker_image_name` | Yes      | -                   | Image name; default ECR repo / Deployment / container name         |
+| `app_path`          | No       | `.`                 | Path to the directory containing the `Dockerfile`                  |
+| `docker_context`    | No       | `app_path`          | Docker build context. Set to `.` for Nx/monorepo root `COPY`s      |
+| `ecr_repository`    | No       | `docker_image_name` | ECR repository name                                                |
+| `deployment_name`   | No       | `docker_image_name` | Kubernetes Deployment to update                                    |
+| `container_name`    | No       | `docker_image_name` | Container within the Deployment to set the new image on            |
+| `manifest_path`     | No       | _auto_              | kustomize dir or plain manifests in your repo (see below)          |
+| `namespace`         | No       | `environment`       | Kubernetes namespace to deploy into                                |
 
 **Secrets:**
 
@@ -63,7 +61,7 @@ jobs:
 **Pipeline Steps:**
 
 1. **Validate inputs** - Fails closed before any AWS credentials are assumed if `environment` isn't `dev`/`uat`/`prod` or `docker_image_name`/`app_path` contain unexpected characters.
-2. **Build and Push to ECR** (`build-ecr.yml`) - OIDC → ECR login → Buildx build (with `ENV=<environment>` build arg and a `type=gha` layer cache) → `docker push`. Always tags `:<git-sha>`; optionally also `:<environment>` when `push_environment_tag: true`. Deploy uses the digest-pinned image reference.
+2. **Build and Push to ECR** (`build-ecr.yml`) - OIDC → ECR login → Buildx build (with `ENV=<environment>` build arg and a `type=gha` layer cache) → `docker push`. Tags the immutable `:<git-sha>` (the deploy handle) and a moving `:<environment>` tag. Only changed layers are transferred. Outputs a digest-pinned image reference.
 3. **Deploy to Kubernetes** (`deploy-k8s.yml`) - OIDC → `aws eks update-kubeconfig` → `kubectl apply` your manifests → `kubectl set image` (digest-pinned) → `kubectl rollout status` with **automatic rollback** to the previous revision on failure.
 
 > Runs are serialized per `environment` + `docker_image_name` via a `concurrency` group, so two deploys to the same target won't race.
@@ -80,8 +78,7 @@ Builds a Docker image (Buildx + GitHub Actions layer cache) and pushes it to Ama
 
 - Builds with `ENV=<environment>` passed as a build arg; any environment-specific build logic lives inside your `Dockerfile`
 - Layer cache is keyed by `docker_image_name` (`type=gha` scope), so unchanged layers are reused across runs
-- Always pushes `:<git-sha>` (works with ECR immutable tags)
-- Optionally also pushes `:<environment>` when `push_environment_tag: true` (requires mutable ECR tags)
+- Pushes `:<git-sha>` (immutable deploy handle) and `:<environment>` (moving convenience tag)
 - Outputs a **digest-pinned** image reference (`repo@sha256:…`) consumed by the deploy step
 
 #### `deploy-k8s.yml`
