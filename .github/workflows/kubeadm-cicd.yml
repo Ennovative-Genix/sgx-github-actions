@@ -59,64 +59,35 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # ----------------------------------------------------
-      # Docker Build / Tag / Push disabled for testing
-      # ----------------------------------------------------
-
-      # - name: Build Docker Image
-      #   working-directory: ${{ env.APP_PATH }}
-      #   run: |
-      #     docker build \
-      #       --build-arg ENV=${{ inputs.environment }} \
-      #       -t ${{ inputs.docker_image_name }}:latest .
-
-      # - name: Tag Docker Image
-      #   run: |
-      #     docker tag \
-      #       ${{ inputs.docker_image_name }}:latest \
-      #       ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest
-
-      #     docker tag \
-      #       ${{ inputs.docker_image_name }}:latest \
-      #       ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
-
-      # - name: Push Latest Image
-      #   run: |
-      #     docker push \
-      #     ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest
-
-      # - name: Push Commit SHA Image
-      #   run: |
-      #     docker push \
-      #     ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
-
-      - name: Print All Values
+      - name: Build Docker Image
+        working-directory: ${{ env.APP_PATH }}
         run: |
-          echo "========== INPUTS =========="
-          echo "Environment      : ${{ inputs.environment }}"
-          echo "Docker Image     : ${{ inputs.docker_image_name }}"
-          echo "ECR Repository   : ${{ inputs.ecr_repository }}"
-          echo "App Path         : ${{ inputs.app_path }}"
+          docker build \
+            --build-arg ENV=${{ inputs.environment }} \
+            -t ${{ inputs.docker_image_name }}:latest .
 
-          echo ""
-          echo "========== ENV =========="
-          echo "AWS_REGION       : ${{ env.AWS_REGION }}"
-          echo "APP_PATH         : ${{ env.APP_PATH }}"
-          echo "IAM_ROLE_ARN     : ${{ env.IAM_ROLE_ARN }}"
+      - name: Tag Docker Image
+        run: |
+          docker tag \
+            ${{ inputs.docker_image_name }}:latest \
+            ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest
 
-          echo ""
-          echo "========== ECR =========="
+          docker tag \
+            ${{ inputs.docker_image_name }}:latest \
+            ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
+
+      - name: Push Latest Image
+        run: |
+          docker push \
+            ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest
+
+      - name: Push Commit SHA Image
+        run: |
+          docker push \
+            ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
+
+      - name: Print Image Details
+        run: |
           echo "Registry         : ${{ steps.login-ecr.outputs.registry }}"
           echo "Latest Image URI : ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest"
           echo "SHA Image URI    : ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}"
-
-          echo ""
-          echo "========== GITHUB =========="
-          echo "Repository       : ${{ github.repository }}"
-          echo "Branch           : ${{ github.ref_name }}"
-          echo "Ref              : ${{ github.ref }}"
-          echo "SHA              : ${{ github.sha }}"
-          echo "Run ID           : ${{ github.run_id }}"
-          echo "Workflow         : ${{ github.workflow }}"
-          echo "Actor            : ${{ github.actor }}"
-          echo "Event            : ${{ github.event_name }}"
