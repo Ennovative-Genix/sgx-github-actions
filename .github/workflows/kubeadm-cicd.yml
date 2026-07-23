@@ -1,0 +1,87 @@
+name: Build Docker and Push to ECR
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: string
+
+      docker_image_name:
+        description: "Docker image name"
+        required: true
+        type: string
+
+      ecr_repository:
+        description: "ECR repository name"
+        required: true
+        type: string
+
+      app_path:
+        description: "Application path"
+        required: false
+        type: string
+        default: "."
+
+    secrets:
+      IAM_ROLE_ARN:
+        required: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      APP_PATH: ${{ inputs.app_path }}
+
+      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || 'ap-south-1' }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-ECR-${{ github.run_id }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker Image
+        working-directory: ${{ env.APP_PATH }}
+        run: |
+          docker build \
+            --build-arg ENV=${{ inputs.environment }} \
+            -t ${{ inputs.docker_image_name }}:latest .
+
+      - name: Tag Docker Image
+        run: |
+          docker tag \
+            ${{ inputs.docker_image_name }}:latest \
+            ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest
+
+          docker tag \
+            ${{ inputs.docker_image_name }}:latest \
+            ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
+
+      - name: Push Latest Image
+        run: |
+          docker push \
+          ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest
+
+      - name: Push Commit SHA Image
+        run: |
+          docker push \
+          ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
