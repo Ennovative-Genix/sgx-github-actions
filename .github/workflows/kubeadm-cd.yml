@@ -8,7 +8,7 @@ on:
 
       image:
         description: "Full ECR image URI"
-        required: true
+        required: false
         type: string
 
       docker_image_name:
@@ -105,6 +105,10 @@ jobs:
           role-to-assume: ${{ env.IAM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-Kubeadm-${{ github.run_id }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@b040164c4934333d597f3f9c67502ff28f814e9c
 
       - name: Verify Cluster Connectivity
         run: |
