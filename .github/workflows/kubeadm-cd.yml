@@ -55,7 +55,7 @@ on:
         required: true
 
       EC2_INSTANCE_ID:
-        required: true
+        required: false
 
 jobs:
   deploy:
