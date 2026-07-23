@@ -115,16 +115,37 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["kubectl get nodes"]}' \
+            --parameters '{
+              "commands": [
+                "set -x",
+                "whoami",
+                "id",
+                "hostname",
+                "pwd",
+                "echo HOME=$HOME",
+                "echo USER=$USER",
+                "echo KUBECONFIG=$KUBECONFIG",
+                "env | sort",
+                "ls -la $HOME || true",
+                "ls -la $HOME/.kube || true",
+                "cat $HOME/.kube/config || true",
+                "kubectl version --client",
+                "kubectl config current-context || true",
+                "kubectl config view || true",
+                "kubectl get nodes"
+              ]
+            }' \
             --region "${{ env.AWS_REGION }}" \
             --query 'Command.CommandId' \
             --output text)
 
+          echo "SSM Command ID: $COMMAND_ID"
+
           workflow-repo/.github/scripts/poll-ssm-command.sh \
-          "$COMMAND_ID" \
-          "${{ env.EC2_INSTANCE_ID }}" \
-          "${{ env.AWS_REGION }}" \
-          "Verify Cluster Connectivity"
+            "$COMMAND_ID" \
+            "${{ env.EC2_INSTANCE_ID }}" \
+            "${{ env.AWS_REGION }}" \
+            "Verify Cluster Connectivity"
 
     #   - name: Pull Latest Repository Changes
     #     run: |
