@@ -62,6 +62,7 @@ jobs:
 
     env:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
 
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1'
         || github.ref_name == 'main' && 'us-east-1'
@@ -96,7 +97,7 @@ jobs:
         run: |
           mkdir -p ~/.kube
 
-          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > ~/.kube/config
+          echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
 
           chmod 600 ~/.kube/config
 
