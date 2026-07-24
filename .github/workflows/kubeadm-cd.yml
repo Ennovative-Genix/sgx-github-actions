@@ -100,6 +100,11 @@ jobs:
           echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
 
           chmod 600 ~/.kube/config
+          ls -la ~/.kube
+          echo "Contexts:"
+          kubectl config get-contexts
+          echo "Current Context:"
+          kubectl config current-context
 
       - name: Verify Cluster Connectivity
         run: |
