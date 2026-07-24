@@ -151,7 +151,7 @@ jobs:
           echo "127.0.0.1 ${K8S_API_HOST}" | sudo tee -a /etc/hosts >/dev/null
 
           kubectl config set-cluster kubernetes \
-            --server=https://127.0.0.1:${K8S_TUNNEL_LOCAL_PORT}
+            --server=https://${K8S_API_HOST}:${K8S_TUNNEL_LOCAL_PORT}
 
           chmod 600 ~/.kube/config
 
