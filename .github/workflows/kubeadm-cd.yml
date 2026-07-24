@@ -163,3 +163,37 @@ jobs:
         run: |
           kubectl cluster-info
           kubectl get nodes
+
+
+      - name: Ensure Namespace Exists
+        run: |
+          kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || \
+          kubectl create namespace ${NAMESPACE}
+
+      - name: Update Deployment Image in Manifest
+        env:
+          IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          DEPLOYMENT_FILE="${{ inputs.manifest_path }}/deployment.yaml"
+
+          echo "Updating image to: ${IMAGE}"
+
+          sed -i -E \
+            "s|image: .*|image: ${IMAGE}|g" \
+            "${DEPLOYMENT_FILE}"
+
+          echo "===== Updated Manifest ====="
+          grep -n "image:" "${DEPLOYMENT_FILE}"
+
+
+      - name: Apply Kubernetes Manifests
+        run: |
+          kubectl apply -f ${{ inputs.manifest_path }} -n ${NAMESPACE}
+
+      - name: Wait For Rollout
+        run: |
+          kubectl rollout status deployment/${DEPLOYMENT_NAME} \
+            -n ${NAMESPACE} \
+            --timeout=300s
