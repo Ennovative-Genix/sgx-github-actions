@@ -148,12 +148,13 @@ jobs:
 
           echo "$DEV_KUBE_CONFIG" | base64 -d > ~/.kube/config
 
-          echo "127.0.0.1 ${K8S_API_HOST}" | sudo tee -a /etc/hosts >/dev/null
+          chmod 600 ~/.kube/config
+
+          kubectl config unset clusters.kubernetes.certificate-authority-data
 
           kubectl config set-cluster kubernetes \
-            --server=https://${K8S_API_HOST}:${K8S_TUNNEL_LOCAL_PORT}
-
-          chmod 600 ~/.kube/config
+            --server=https://127.0.0.1:${K8S_TUNNEL_LOCAL_PORT} \
+            --insecure-skip-tls-verify=true
 
           kubectl config get-contexts
           kubectl config current-context
