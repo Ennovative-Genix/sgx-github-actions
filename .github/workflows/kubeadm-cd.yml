@@ -63,6 +63,9 @@ jobs:
     env:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+      K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
+      K8S_API_HOST: 12.0.3.244
+      K8S_TUNNEL_LOCAL_PORT: 8443
 
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1'
         || github.ref_name == 'main' && 'us-east-1'
@@ -93,17 +96,63 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
+      - name: Start SSM tunnel to kube-apiserver
+        run: |
+          set -euo pipefail
+
+          curl -fsSL https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb \
+            -o /tmp/session-manager-plugin.deb
+
+          sudo dpkg -i /tmp/session-manager-plugin.deb
+
+          session-manager-plugin --version
+
+          echo "Tunneling ${K8S_API_HOST}:6443 -> 127.0.0.1:${K8S_TUNNEL_LOCAL_PORT}"
+
+          nohup aws ssm start-session \
+            --target "$K8S_INSTANCE_ID" \
+            --region "$AWS_REGION" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters "{\"host\":[\"${K8S_API_HOST}\"],\"portNumber\":[\"6443\"],\"localPortNumber\":[\"${K8S_TUNNEL_LOCAL_PORT}\"]}" \
+            >/tmp/ssm-k8s-tunnel.log 2>&1 &
+
+          echo $! >/tmp/ssm-k8s-tunnel.pid
+
+          echo "Waiting for SSM tunnel..."
+
+          for i in $(seq 1 60); do
+            if (echo >/dev/tcp/127.0.0.1/${K8S_TUNNEL_LOCAL_PORT}) >/dev/null 2>&1; then
+              echo "Tunnel ready"
+              exit 0
+            fi
+
+            if ! kill -0 "$(cat /tmp/ssm-k8s-tunnel.pid)" 2>/dev/null; then
+              echo "::error::Tunnel process exited"
+              cat /tmp/ssm-k8s-tunnel.log
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          echo "::error::Timeout waiting for tunnel"
+          cat /tmp/ssm-k8s-tunnel.log
+          exit 1
+
       - name: Configure kubeconfig
         run: |
           mkdir -p ~/.kube
 
           echo "$DEV_KUBE_CONFIG" | base64 -d > ~/.kube/config
 
+          echo "127.0.0.1 ${K8S_API_HOST}" | sudo tee -a /etc/hosts >/dev/null
+
+          kubectl config set-cluster kubernetes \
+            --server=https://127.0.0.1:${K8S_TUNNEL_LOCAL_PORT}
+
           chmod 600 ~/.kube/config
-          ls -la ~/.kube
-          echo "Contexts:"
+
           kubectl config get-contexts
-          echo "Current Context:"
           kubectl config current-context
 
       - name: Verify Cluster Connectivity
