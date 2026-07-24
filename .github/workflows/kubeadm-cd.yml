@@ -49,6 +49,9 @@ on:
       DEV_KUBE_CONFIG:
         required: true
 
+      K8S_INSTANCE_ID:
+        required: true
+
 jobs:
   deploy:
     name: Deploy to Kubernetes
