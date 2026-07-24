@@ -1,66 +1,57 @@
+name: Reusable K8s Deployment
+
 on:
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (dev, uat, stg, prod)"
+        description: Target environment
         required: true
         type: string
 
       ecr_repository:
-        description: "ECR repository name"
+        description: ECR repository name
         required: true
         type: string
 
       docker_image_name:
-        description: "Application name"
+        description: Application name
         required: true
         type: string
 
       deployment_name:
-        description: "Kubernetes deployment name"
+        description: Kubernetes deployment name
         required: false
-        type: string
         default: ""
+        type: string
 
       container_name:
-        description: "Container name"
+        description: Kubernetes container name
         required: false
-        type: string
         default: ""
+        type: string
 
       namespace:
-        description: "Kubernetes namespace"
+        description: Kubernetes namespace
         required: false
-        type: string
         default: ""
+        type: string
 
       manifest_path:
-        description: "Manifest path"
+        description: Manifest directory
         required: false
-        type: string
         default: "k8s"
-
-      repo_path:
-        description: "Application path on Kubeadm master"
-        required: true
-        type: string
-
-      git_branch:
-        description: "Git branch to deploy"
-        required: true
         type: string
 
     secrets:
       IAM_ROLE_ARN:
         required: true
 
-      K8S_INSTANCE_ID:
+      KUBE_CONFIG_DATA:
         required: true
-
 
 jobs:
   deploy:
-    name: Deploy to Kubeadm Cluster
+    name: Deploy to Kubernetes
     runs-on: ubuntu-latest
 
     environment: ${{ inputs.environment }}
@@ -71,11 +62,10 @@ jobs:
 
     env:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      K8S_INSTANCE_ID: ${{  secrets.K8S_INSTANCE_ID  }}
 
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1'
-        || (github.ref_name == 'main') && 'us-east-1'
-        || (github.ref_name == 'staging') && 'us-east-1'
+        || github.ref_name == 'main' && 'us-east-1'
+        || github.ref_name == 'staging' && 'us-east-1'
         || 'ap-south-1' }}
 
       NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
@@ -84,157 +74,33 @@ jobs:
 
       CONTAINER_NAME: ${{ inputs.container_name != '' && inputs.container_name || inputs.docker_image_name }}
 
-
     steps:
-
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-
-      - name: Checkout sgx-github-actions workflow repository
-        uses: actions/checkout@v4
-        with:
-          repository: Ennovative-Genix/sgx-github-actions
-          ref: main
-          sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: false
-          path: workflow-repo
-
-
-      - name: Make poll script executable
-        run: chmod +x workflow-repo/.github/scripts/poll-ssm-command.sh
-
-
-      - name: Configure AWS Credentials (OIDC)
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          role-to-assume: ${{ secrets.IAM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-Kubeadm-${{ github.run_id }}
-
+          role-session-name: GitHubActions-${{ github.run_id }}
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@b040164c4934333d597f3f9c67502ff28f814e9c
+        uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+
+          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 -d > ~/.kube/config
+
+          chmod 600 ~/.kube/config
 
       - name: Verify Cluster Connectivity
         run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.K8S_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=[
-              "export KUBECONFIG=/etc/kubernetes/admin.conf",
-              "whoami",
-              "kubectl config current-context",
-              "kubectl get nodes"
-            ]' \
-            --region "${{ env.AWS_REGION }}" \
-            --query "Command.CommandId" \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh \
-          "$COMMAND_ID" \
-          "${{ env.K8S_INSTANCE_ID }}" \
-          "${{ env.AWS_REGION }}" \
-          "Verify Cluster Connectivity"
-
-
-      - name: Pull Latest Repository Changes
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.K8S_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[
-              \"cd ${{ inputs.repo_path }}\",
-              \"git fetch origin\",
-              \"git checkout ${{ inputs.git_branch }}\",
-              \"git pull origin ${{ inputs.git_branch }}\"
-            ]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh \
-          "$COMMAND_ID" \
-          "${{ env.K8S_INSTANCE_ID }}" \
-          "${{ env.AWS_REGION }}" \
-          "Pull Latest Repository"
-
-
-      - name: Ensure Namespace Exists
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.K8S_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[
-              \"export KUBECONFIG=/etc/kubernetes/admin.conf\",
-              \"kubectl get namespace ${NAMESPACE} || kubectl create namespace ${NAMESPACE}\"
-            ]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh \
-          "$COMMAND_ID" \
-          "${{ env.K8S_INSTANCE_ID }}" \
-          "${{ env.AWS_REGION }}" \
-          "Ensure Namespace"
-
-      - name: Update Deployment Image in Manifest
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.K8S_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[
-              \"cd ${{ inputs.repo_path }}\",
-              \"sed -i '/name: ${{ inputs.container_name }}/{n;s|image: .*|image: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}|}' ${{ inputs.manifest_path }}/deployment.yaml"
-            ]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh \
-          "$COMMAND_ID" \
-          "${{ env.K8S_INSTANCE_ID }}" \
-          "${{ env.AWS_REGION }}" \
-          "Update Image in Manifest"
-
-      - name: Apply Kubernetes Manifests
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.K8S_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[
-              \"export KUBECONFIG=/etc/kubernetes/admin.conf\",
-              \"cd ${{ inputs.repo_path }}\",
-              \"kubectl apply -f ${{ inputs.manifest_path }} -n ${NAMESPACE}\"
-            ]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh \
-          "$COMMAND_ID" \
-          "${{ env.K8S_INSTANCE_ID }}" \
-          "${{ env.AWS_REGION }}" \
-          "Apply Manifests"
-
-      - name: Wait For Rollout
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.K8S_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[
-              \"export KUBECONFIG=/etc/kubernetes/admin.conf\",
-              \"kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE} --timeout=300s\"
-            ]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh \
-          "$COMMAND_ID" \
-          "${{ env.K8S_INSTANCE_ID }}" \
-          "${{ env.AWS_REGION }}" \
-          "Rollout Status"
+          kubectl cluster-info
+          kubectl get nodes
