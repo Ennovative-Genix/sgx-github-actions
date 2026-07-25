@@ -170,28 +170,28 @@ jobs:
           kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || \
           kubectl create namespace ${NAMESPACE}
 
-      - name: Update Deployment Image in Manifest
+      - name: Apply Kubernetes Manifests
+        run: |
+          kubectl apply -f ${{ inputs.manifest_path }} -n ${NAMESPACE}
+
+      - name: Update Deployment Image
         env:
           IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
         run: |
           set -euo pipefail
 
-          DEPLOYMENT_FILE="${{ inputs.manifest_path }}/deployment.yaml"
+          echo "Updating deployment ${DEPLOYMENT_NAME}"
+          echo "Container: ${CONTAINER_NAME}"
+          echo "Image: ${IMAGE}"
 
-          echo "Updating image to: ${IMAGE}"
+          kubectl set image deployment/${DEPLOYMENT_NAME} \
+            ${CONTAINER_NAME}=${IMAGE} \
+            -n ${NAMESPACE}
 
-          sed -i -E \
-            "s|image: .*|image: ${IMAGE}|g" \
-            "${DEPLOYMENT_FILE}"
-
-          echo "===== Updated Manifest ====="
-          grep -n "image:" "${DEPLOYMENT_FILE}"
-
-
-      - name: Apply Kubernetes Manifests
-        run: |
-          kubectl apply -f ${{ inputs.manifest_path }} -n ${NAMESPACE}
-
+          kubectl get deployment ${DEPLOYMENT_NAME} \
+            -n ${NAMESPACE} \
+            -o wide
+          
       - name: Wait For Rollout
         run: |
           kubectl rollout status deployment/${DEPLOYMENT_NAME} \
