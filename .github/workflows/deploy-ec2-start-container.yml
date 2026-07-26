@@ -90,7 +90,7 @@ jobs:
 
       - name: Configure AWS credentials
         id: aws
-        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v2
         with:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
@@ -135,7 +135,7 @@ jobs:
 
       - name: Write .env to instance
         if: steps.files.outputs.has-env == 'true'
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}
@@ -146,7 +146,7 @@ jobs:
             chmod 600 ${{ env.REMOTE_DIR }}/.env
 
       - name: Write compose file to instance
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}
@@ -156,7 +156,7 @@ jobs:
             echo ${{ steps.files.outputs.compose }} | base64 -d > ${{ env.REMOTE_DIR }}/docker-compose.yml
 
       - name: Stop existing container
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}
@@ -169,7 +169,7 @@ jobs:
             docker rm -f ${{ inputs.docker_image_name }} || true
 
       - name: Start container
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}
@@ -181,7 +181,7 @@ jobs:
 
       - name: Health check
         if: inputs.health_check_url != ''
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}
@@ -191,7 +191,7 @@ jobs:
 
       - name: Remove image tarball
         if: inputs.cleanup_tarball
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}

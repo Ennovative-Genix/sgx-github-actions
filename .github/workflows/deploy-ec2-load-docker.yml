@@ -63,7 +63,7 @@ jobs:
     steps:
       - name: Configure AWS credentials
         id: aws
-        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v2
         with:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
@@ -90,7 +90,7 @@ jobs:
 
       - name: Prune unused images
         if: inputs.prune_images
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}
@@ -101,7 +101,7 @@ jobs:
           commands: docker image prune -f
 
       - name: Download image tarball to instance
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}
@@ -112,7 +112,7 @@ jobs:
             ls -lh /var/tmp/${{ inputs.docker_image_name }}/
 
       - name: Load image into Docker
-        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@v2
         with:
           instance-id: ${{ secrets.EC2_INSTANCE_ID }}
           region: ${{ steps.aws.outputs.region }}

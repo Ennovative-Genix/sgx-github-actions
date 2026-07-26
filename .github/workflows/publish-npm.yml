@@ -107,7 +107,7 @@ jobs:
 
       - name: Configure AWS credentials
         id: aws
-        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v2
         with:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
@@ -116,7 +116,7 @@ jobs:
 
       - name: Compute version
         id: version
-        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@v2
         with:
           strategy: ${{ inputs.version_strategy }}
           working-directory: ${{ inputs.app_path }}
@@ -124,7 +124,7 @@ jobs:
           version-override: ${{ inputs.version }}
 
       - name: Setup Node and install dependencies
-        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@v2
         with:
           node-version: ${{ inputs.node_version }}
           package-manager: ${{ inputs.package_manager }}

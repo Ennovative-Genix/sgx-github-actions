@@ -87,7 +87,7 @@ jobs:
 
       - name: Configure AWS credentials
         id: aws
-        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v2
         with:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
@@ -96,7 +96,7 @@ jobs:
 
       - name: Compute version
         id: version
-        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@v2
         with:
           strategy: ${{ inputs.version_strategy }}
           working-directory: ${{ inputs.app_path }}
@@ -104,14 +104,14 @@ jobs:
           version-override: ${{ inputs.version }}
 
       - name: Setup Python
-        uses: Ennovative-Genix/sgx-github-actions/actions/setup-python@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-python@v2
         with:
           python-version: ${{ inputs.python_version }}
           working-directory: ${{ inputs.app_path }}
           install: "false"
 
       - name: Authenticate twine against CodeArtifact
-        uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@v2
         with:
           tool: twine
           domain: ${{ inputs.codeartifact_domain }}

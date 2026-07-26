@@ -107,7 +107,7 @@ jobs:
 
       - name: Configure AWS credentials
         if: inputs.codeartifact_domain != ''
-        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v2
         with:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
@@ -115,7 +115,7 @@ jobs:
           session-name: ci-java
 
       - name: Setup JDK
-        uses: Ennovative-Genix/sgx-github-actions/actions/setup-java@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-java@v2
         with:
           java-version: ${{ matrix.java-version }}
           distribution: ${{ inputs.distribution }}

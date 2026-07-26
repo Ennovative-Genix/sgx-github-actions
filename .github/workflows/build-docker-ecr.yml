@@ -113,11 +113,11 @@ jobs:
 
       - name: Free up runner disk space
         if: inputs.cleanup_runner
-        uses: Ennovative-Genix/sgx-github-actions/actions/runner-disk-cleanup@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/runner-disk-cleanup@v2
 
       - name: Configure AWS credentials
         id: aws
-        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v2
         with:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
@@ -126,7 +126,7 @@ jobs:
 
       - name: Compute version
         id: version
-        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@v2
         with:
           strategy: ${{ inputs.version_strategy }}
           working-directory: ${{ inputs.app_path }}
@@ -135,14 +135,14 @@ jobs:
 
       - name: Log in to ECR
         id: ecr
-        uses: Ennovative-Genix/sgx-github-actions/actions/ecr-login@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/ecr-login@v2
         with:
           repository: ${{ inputs.ecr_repository }}
           create-repository: ${{ inputs.create_repository }}
 
       - name: Build and push image
         id: build
-        uses: Ennovative-Genix/sgx-github-actions/actions/docker-build@main
+        uses: Ennovative-Genix/sgx-github-actions/actions/docker-build@v2
         with:
           image-name: ${{ inputs.ecr_repository }}
           registry: ${{ steps.ecr.outputs.registry }}
