@@ -1,6 +1,9 @@
-# Nx monorepo: affected-only CI on pull requests, full build and EKS rollout on
-# merge.
+# Nx monorepo: an application deployed to EKS and a shared library published to
+# CodeArtifact.
 # Copy to .github/workflows/deploy.yml in your application repository.
+#
+# Two entry points because these are two different products out of one
+# repository: deploy.yml ships the app, publish.yml ships the library.
 
 name: CI/CD
 
@@ -18,81 +21,50 @@ permissions:
   contents: read
 
 jobs:
-  # Pull requests only build what changed. nx_affected sets fetch-depth: 0 and
-  # fetches the base branch, without which Nx cannot compute the diff.
-  affected:
-    name: Affected
-    if: github.event_name == 'pull_request'
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
+  ci-cd:
+    name: CI/CD
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy.yml@v1
     permissions:
       id-token: write
       contents: read
     with:
-      framework: nx
-      node_versions: '["20.x"]'
-      nx_affected: true
-      nx_targets: "lint,test,build"
-      aws_region: us-east-1
-      codeartifact_domain: sgx
-      codeartifact_repository: npm-store
-      codeartifact_namespace: sgx
-    secrets:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-
-  # Merges build the whole workspace, so a project broken by an unrelated change
-  # cannot reach a deployable image.
-  full:
-    name: Full build
-    if: github.event_name == 'push'
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
-    permissions:
-      id-token: write
-      contents: read
-    with:
-      framework: nx
-      node_versions: '["20.x"]'
-      nx_affected: false
-      nx_targets: "lint,test,build"
-      aws_region: us-east-1
-      codeartifact_domain: sgx
-      codeartifact_repository: npm-store
-      codeartifact_namespace: sgx
-    secrets:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-
-  deploy-api:
-    name: Deploy API
-    needs: full
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-eks.yml@v1
-    permissions:
-      id-token: write
-      contents: read
-    with:
+      target: eks
       environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+
+      run_ci: true
+      ci_language: node
+      framework: nx
+      node_versions: '["20.x"]'
+
+      aws_region: us-east-1
+      codeartifact_domain: sgx
+      codeartifact_repository: npm-store
+      codeartifact_namespace: sgx
+
       ecr_repository: sgx/orders-api
       cluster_name: sgx-${{ github.ref_name == 'main' && 'prod' || 'dev' }}
       namespace: orders
       deployment_name: orders-api
-      # The image is built from the Nx-produced dist/, so the Dockerfile lives
-      # beside the workspace root rather than inside the project.
-      app_path: .
+      # Built from the Nx-produced dist/, so the Dockerfile is addressed from
+      # the workspace root rather than the project directory.
       dockerfile: apps/orders-api/Dockerfile
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
   publish-libs:
-    name: Publish shared libraries
-    needs: full
-    if: github.ref_name == 'main'
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/publish-npm.yml@v1
+    name: Publish libraries
+    if: github.event_name == 'push' && github.ref_name == 'main'
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/publish.yml@v1
     permissions:
       id-token: write
       contents: read
     with:
-      environment: prod
+      ecosystem: npm
       app_path: dist/libs/shared
+      # Nx has already built the library into dist/, so there is nothing left
+      # for the publish step to build.
       build_script: ""
-      version_strategy: auto
+      aws_region: us-east-1
       codeartifact_domain: sgx
       codeartifact_repository: npm-store
       codeartifact_namespace: sgx

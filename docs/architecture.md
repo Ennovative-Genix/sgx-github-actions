@@ -11,11 +11,15 @@ in practice it gets applied in three.
 This repository holds one copy of each step. Application repositories declare
 *what* they want deployed; this repository decides *how*.
 
-## Three layers
+## Four layers
 
 ```
+Layer 4   Entry points     deploy, publish
+          (dispatch)       One argument selects the path. What an app repo calls.
+                                        |
+                                        v
 Layer 3   Pipelines        pipeline-ec2, pipeline-eks, pipeline-lambda, pipeline-static
-          (orchestration)  Chain stages together. What an app repo calls.
+          (orchestration)  Chain stages together for one target.
                                         |
                                         v
 Layer 2   Stages           ci-*, build-*, publish-*, deploy-*, rollback-*
@@ -39,6 +43,62 @@ The rule that keeps the layers from collapsing into each other:
   can be gated.
 - **A pipeline contains no logic of its own.** If a pipeline grows a `run:` step,
   that logic belongs in a stage or an action.
+- **An entry point decides nothing except which pipeline runs.** It validates
+  arguments, resolves a mode from the trigger, and dispatches.
+
+## Why the entry points look repetitive
+
+A consumer writes one job:
+
+```yaml
+uses: …/deploy.yml@v1
+with:
+  target: eks
+```
+
+The obvious implementation is not available:
+
+```yaml
+# Does not work. `uses` is resolved before any expression is evaluated.
+uses: ./.github/workflows/pipeline-${{ inputs.target }}.yml
+```
+
+`jobs.<id>.uses` must be a static literal. GitHub reads it while building the
+run graph, before `inputs` exists. So the dispatch is four statically declared
+jobs, each gated on `if: inputs.target == '…'`, and three of them are skipped on
+every run.
+
+That is why the entry points are long and the consumer files are short. The
+verbosity is paid once, here, instead of in every application repository.
+
+The same constraint drives two details that otherwise look odd:
+
+- **Target jobs depend on all three CI jobs.** Only one ever runs, so the guard
+  is `if: !cancelled() && !failure() && …`. Any status function replaces the
+  implied `success()` check, which is what stops the two skipped CI jobs from
+  skipping the deployment with them — while a CI job that genuinely failed still
+  blocks it.
+- **A skipped job's outputs are empty strings, not errors.** That is what makes
+  `${{ jobs.ec2.outputs.version || jobs.eks.outputs.version }}` work as a way to
+  collect the output of whichever branch ran.
+
+## The nesting ceiling
+
+GitHub connects at most four levels of workflows, and the consumer's own file is
+the first. Adding the entry point layer spends the last one:
+
+```
+consumer  ->  deploy.yml  ->  pipeline-ec2.yml  ->  build-docker-s3.yml
+   1             2                  3                      4
+```
+
+Two consequences, both enforced by `scripts/check-nesting-depth.py` in CI:
+
+- Nothing new can be inserted below an entry point.
+- A consumer must call `deploy.yml` from a normal workflow. Wrapping it in
+  another reusable workflow makes five levels and fails at runtime, in *their*
+  repository. Repositories that need to wrap should call the `pipeline-*`
+  workflow directly, which leaves a level spare.
 
 ## Full flow, EC2 path
 
@@ -46,11 +106,14 @@ The rule that keeps the layers from collapsing into each other:
 flowchart TD
     subgraph app["Application repository"]
         trigger["push / PR / tag"]
-        caller[".github/workflows/deploy.yml<br/>uses: …/pipeline-ec2.yml@v1"]
+        caller[".github/workflows/deploy.yml<br/>uses: …/deploy.yml@v1<br/>target: ec2"]
         trigger --> caller
     end
 
     subgraph central["sgx-github-actions"]
+        subgraph l4["Entry point"]
+            entry["deploy.yml<br/>dispatch on target"]
+        end
         subgraph l3["Pipeline"]
             init["pipeline-ec2.yml"]
         end
@@ -77,7 +140,7 @@ flowchart TD
         ec2["EC2 instance<br/>docker compose up"]
     end
 
-    caller --> init
+    caller --> entry --> init
     init --> build --> load --> start
 
     build -.-> clean

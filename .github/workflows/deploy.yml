@@ -1,0 +1,598 @@
+name: Deploy
+
+# Single entry point for application CI and deployment. A repository calls this
+# once and passes `target`; every other input is optional and grouped by target
+# below.
+#
+# `uses:` cannot be built from an expression, so the dispatch is a set of
+# statically declared, `if:`-gated jobs. Exactly one target branch runs.
+#
+# This sits one level above the pipeline workflows, which makes the deepest
+# chain caller -> deploy -> pipeline-* -> build-* : four levels, GitHub's
+# maximum. Call this directly from a repository's own workflow. To wrap it in
+# another reusable workflow, call the pipeline-* workflow instead.
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "ec2, eks, lambda or static."
+        required: true
+        type: string
+      environment:
+        description: "Target environment (dev, qa, uat, stg, prod)."
+        required: true
+        type: string
+      mode:
+        description: "auto, ci-only or deploy. 'auto' runs CI without deploying on a pull request, and both otherwise."
+        required: false
+        type: string
+        default: "auto"
+
+      run_ci:
+        description: "Lint, test and build before deploying. Ignored for the static target, whose pipeline already builds and tests."
+        required: false
+        type: boolean
+        default: false
+      ci_language:
+        description: "node, python or java. Required when run_ci is true."
+        required: false
+        type: string
+        default: ""
+
+      app_path:
+        description: "Path to the application directory, relative to the repository root."
+        required: false
+        type: string
+        default: "."
+      dockerfile:
+        description: "ec2, eks, lambda. Dockerfile path, relative to app_path."
+        required: false
+        type: string
+        default: "Dockerfile"
+      build_args:
+        description: "ec2, eks, lambda. Extra build arguments, one KEY=value per line."
+        required: false
+        type: string
+        default: ""
+      platforms:
+        description: "eks, lambda. Target platforms. Must match the Lambda function's architecture."
+        required: false
+        type: string
+        default: "linux/amd64"
+      aws_region:
+        description: "Region override. Defaults to the AWS_REGION environment variable on the target environment. Required when run_ci pulls from CodeArtifact, since CI jobs have no environment."
+        required: false
+        type: string
+        default: ""
+      version_strategy:
+        description: "Passed to compute-version: auto, tag, manifest or run-number."
+        required: false
+        type: string
+        default: "auto"
+
+      docker_image_name:
+        description: "ec2. Image name, also the working directory on the instance."
+        required: false
+        type: string
+        default: ""
+      s3_path:
+        description: "ec2. S3 key prefix for the image tarball."
+        required: false
+        type: string
+        default: ""
+      port_mapping:
+        description: "ec2. Host-to-container port mapping. Defaults to the PORT_MAPPING variable."
+        required: false
+        type: string
+        default: ""
+      compose_file:
+        description: "ec2. Compose file path, relative to app_path."
+        required: false
+        type: string
+        default: "docker-compose.yml"
+      health_check_url:
+        description: "ec2. URL curled on the instance after start-up. Empty skips the check."
+        required: false
+        type: string
+        default: ""
+      secrets_region:
+        description: "ec2. Region holding the Secrets Manager secret, when it differs from the workload region."
+        required: false
+        type: string
+        default: ""
+
+      ecr_repository:
+        description: "eks, lambda. ECR repository name."
+        required: false
+        type: string
+        default: ""
+      cluster_name:
+        description: "eks. EKS cluster name."
+        required: false
+        type: string
+        default: ""
+      namespace:
+        description: "eks. Kubernetes namespace."
+        required: false
+        type: string
+        default: "default"
+      deploy_method:
+        description: "eks. kubectl, kustomize or helm."
+        required: false
+        type: string
+        default: "kubectl"
+      deployment_name:
+        description: "eks. Deployment to update, for the kubectl method."
+        required: false
+        type: string
+        default: ""
+      container_name:
+        description: "eks. Container inside the Deployment. Defaults to deployment_name."
+        required: false
+        type: string
+        default: ""
+      manifest_path:
+        description: "eks. Kustomize overlay directory."
+        required: false
+        type: string
+        default: ""
+      kustomize_image_name:
+        description: "eks. Image name in the manifests that kustomize rewrites."
+        required: false
+        type: string
+        default: ""
+      helm_chart_path:
+        description: "eks. Chart directory or reference."
+        required: false
+        type: string
+        default: ""
+      helm_release_name:
+        description: "eks. Helm release name."
+        required: false
+        type: string
+        default: ""
+      helm_values_file:
+        description: "eks. Values file passed to helm with -f."
+        required: false
+        type: string
+        default: ""
+      rollout_timeout:
+        description: "eks. How long to wait for the rollout to become ready."
+        required: false
+        type: string
+        default: "10m"
+
+      function_name:
+        description: "lambda. Function name or ARN."
+        required: false
+        type: string
+        default: ""
+      alias:
+        description: "lambda. Alias to move to the new version. Empty skips alias management."
+        required: false
+        type: string
+        default: ""
+
+      framework:
+        description: "node CI and static. node, nestjs, angular, react or nx."
+        required: false
+        type: string
+        default: "node"
+      node_versions:
+        description: "node CI and static. JSON array of Node versions; the first is used for the static build."
+        required: false
+        type: string
+        default: '["20.x"]'
+      package_manager:
+        description: "node CI and static. npm, yarn or pnpm."
+        required: false
+        type: string
+        default: "npm"
+      build_output:
+        description: "static. Build output directory, relative to app_path."
+        required: false
+        type: string
+        default: "dist"
+      build_script:
+        description: "static. npm script for the build. Defaults to 'build:<environment>' when it exists."
+        required: false
+        type: string
+        default: ""
+      run_test:
+        description: "static. Run tests before deploying."
+        required: false
+        type: boolean
+        default: true
+      bucket:
+        description: "static. Destination S3 bucket. Defaults to the STATIC_SITE_BUCKET variable."
+        required: false
+        type: string
+        default: ""
+      destination_prefix:
+        description: "static. Key prefix inside the bucket."
+        required: false
+        type: string
+        default: ""
+      distribution_id:
+        description: "static. CloudFront distribution to invalidate. Defaults to the CLOUDFRONT_DISTRIBUTION_ID variable."
+        required: false
+        type: string
+        default: ""
+
+      python_versions:
+        description: "python CI. JSON array of Python versions."
+        required: false
+        type: string
+        default: '["3.12"]'
+      python_extras:
+        description: "python CI. Optional dependency group to install."
+        required: false
+        type: string
+        default: "dev"
+      lint_command:
+        description: "python CI. Lint command."
+        required: false
+        type: string
+        default: "ruff check ."
+      test_command:
+        description: "python CI. Test command."
+        required: false
+        type: string
+        default: "pytest -q"
+
+      java_versions:
+        description: "java CI. JSON array of JDK versions."
+        required: false
+        type: string
+        default: '["21"]'
+      java_distribution:
+        description: "java CI. JDK distribution."
+        required: false
+        type: string
+        default: "temurin"
+      build_tool:
+        description: "java CI. maven or gradle."
+        required: false
+        type: string
+        default: "maven"
+
+      codeartifact_domain:
+        description: "CI. CodeArtifact domain for private dependencies."
+        required: false
+        type: string
+        default: ""
+      codeartifact_repository:
+        description: "CI. CodeArtifact repository."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "CI. AWS account id owning the CodeArtifact domain."
+        required: false
+        type: string
+        default: ""
+      codeartifact_namespace:
+        description: "node CI. npm scope bound to CodeArtifact, without the leading @."
+        required: false
+        type: string
+        default: ""
+
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication."
+        required: true
+      EC2_INSTANCE_ID:
+        description: "ec2. Target EC2 Instance ID."
+        required: false
+      AWS_SECRETS_ARN:
+        description: "ec2. Secrets Manager ARN holding the .env contents."
+        required: false
+
+    outputs:
+      version:
+        description: "Version deployed, where the target produces one."
+        value: ${{ jobs.ec2.outputs.version || jobs.eks.outputs.version }}
+      image_uri:
+        description: "eks. Image reference that was deployed."
+        value: ${{ jobs.eks.outputs.image_uri }}
+      rollback_key:
+        description: "ec2. S3 key of this build's archive. Pass to rollback-ec2.yml."
+        value: ${{ jobs.ec2.outputs.rollback_key }}
+      function_version:
+        description: "lambda. Published version. Pass to rollback-lambda.yml."
+        value: ${{ jobs.lambda.outputs.function_version }}
+      deployed:
+        description: "'true' when a deployment ran, 'false' when the run was CI only."
+        value: ${{ jobs.resolve.outputs.should_deploy }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_deploy: ${{ steps.plan.outputs.should-deploy }}
+
+    steps:
+      - name: Validate inputs and resolve the plan
+        id: plan
+        env:
+          TARGET: ${{ inputs.target }}
+          MODE: ${{ inputs.mode }}
+          RUN_CI: ${{ inputs.run_ci }}
+          CI_LANGUAGE: ${{ inputs.ci_language }}
+          DOCKER_IMAGE_NAME: ${{ inputs.docker_image_name }}
+          S3_PATH: ${{ inputs.s3_path }}
+          ECR_REPOSITORY: ${{ inputs.ecr_repository }}
+          CLUSTER_NAME: ${{ inputs.cluster_name }}
+          FUNCTION_NAME: ${{ inputs.function_name }}
+        run: |
+          set -euo pipefail
+
+          # Failing here costs one short job. Failing after the image is built
+          # costs the whole build, and after a partial rollout costs more.
+          missing=""
+
+          case "$TARGET" in
+            ec2)
+              [ -n "$DOCKER_IMAGE_NAME" ] || missing="$missing docker_image_name"
+              [ -n "$S3_PATH" ] || missing="$missing s3_path"
+              ;;
+            eks)
+              [ -n "$ECR_REPOSITORY" ] || missing="$missing ecr_repository"
+              [ -n "$CLUSTER_NAME" ] || missing="$missing cluster_name"
+              ;;
+            lambda)
+              [ -n "$FUNCTION_NAME" ] || missing="$missing function_name"
+              [ -n "$ECR_REPOSITORY" ] || missing="$missing ecr_repository"
+              ;;
+            static) ;;
+            *)
+              echo "::error title=Unknown target::'$TARGET' is not one of ec2, eks, lambda, static."
+              exit 1
+              ;;
+          esac
+
+          if [ -n "$missing" ]; then
+            echo "::error title=Missing inputs::Target '$TARGET' requires:${missing}"
+            exit 1
+          fi
+
+          if [ "$RUN_CI" = "true" ] && [ "$TARGET" != "static" ]; then
+            case "$CI_LANGUAGE" in
+              node | python | java) ;;
+              *)
+                echo "::error title=Missing ci_language::run_ci is true, so ci_language must be node, python or java."
+                exit 1
+                ;;
+            esac
+          fi
+
+          case "$MODE" in
+            auto)
+              # A pull request verifies; it must never reach an environment.
+              if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+                should_deploy="false"
+              else
+                should_deploy="true"
+              fi
+              ;;
+            ci-only) should_deploy="false" ;;
+            deploy)  should_deploy="true" ;;
+            *)
+              echo "::error title=Unknown mode::'$MODE' is not one of auto, ci-only, deploy."
+              exit 1
+              ;;
+          esac
+
+          echo "should-deploy=$should_deploy" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Plan"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Target | \`$TARGET\` |"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Mode | \`$MODE\` |"
+            echo "| Deploys | \`$should_deploy\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ci-node:
+    name: CI (Node.js)
+    needs: resolve
+    if: inputs.run_ci && inputs.ci_language == 'node' && inputs.target != 'static'
+    uses: ./.github/workflows/ci-node.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      framework: ${{ inputs.framework }}
+      node_versions: ${{ inputs.node_versions }}
+      package_manager: ${{ inputs.package_manager }}
+      app_path: ${{ inputs.app_path }}
+      target_env: ${{ inputs.environment }}
+      aws_region: ${{ inputs.aws_region }}
+      codeartifact_domain: ${{ inputs.codeartifact_domain }}
+      codeartifact_repository: ${{ inputs.codeartifact_repository }}
+      codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+      codeartifact_namespace: ${{ inputs.codeartifact_namespace }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  ci-python:
+    name: CI (Python)
+    needs: resolve
+    if: inputs.run_ci && inputs.ci_language == 'python' && inputs.target != 'static'
+    uses: ./.github/workflows/ci-python.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      python_versions: ${{ inputs.python_versions }}
+      app_path: ${{ inputs.app_path }}
+      extras: ${{ inputs.python_extras }}
+      lint_command: ${{ inputs.lint_command }}
+      test_command: ${{ inputs.test_command }}
+      aws_region: ${{ inputs.aws_region }}
+      codeartifact_domain: ${{ inputs.codeartifact_domain }}
+      codeartifact_repository: ${{ inputs.codeartifact_repository }}
+      codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  ci-java:
+    name: CI (Java)
+    needs: resolve
+    if: inputs.run_ci && inputs.ci_language == 'java' && inputs.target != 'static'
+    uses: ./.github/workflows/ci-java.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      java_versions: ${{ inputs.java_versions }}
+      distribution: ${{ inputs.java_distribution }}
+      build_tool: ${{ inputs.build_tool }}
+      app_path: ${{ inputs.app_path }}
+      aws_region: ${{ inputs.aws_region }}
+      codeartifact_domain: ${{ inputs.codeartifact_domain }}
+      codeartifact_repository: ${{ inputs.codeartifact_repository }}
+      codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  # Every target job depends on all three CI jobs. At most one of them ever
+  # runs; `!cancelled() && !failure()` replaces the implied success() check so
+  # the skipped ones do not skip the deployment, while a CI job that actually
+  # failed still blocks it.
+  ec2:
+    name: EC2
+    needs: [resolve, ci-node, ci-python, ci-java]
+    if: ${{ !cancelled() && !failure() && inputs.target == 'ec2' && needs.resolve.outputs.should_deploy == 'true' }}
+    uses: ./.github/workflows/pipeline-ec2.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      docker_image_name: ${{ inputs.docker_image_name }}
+      s3_path: ${{ inputs.s3_path }}
+      app_path: ${{ inputs.app_path }}
+      port_mapping: ${{ inputs.port_mapping }}
+      dockerfile: ${{ inputs.dockerfile }}
+      compose_file: ${{ inputs.compose_file }}
+      build_args: ${{ inputs.build_args }}
+      aws_region: ${{ inputs.aws_region }}
+      secrets_region: ${{ inputs.secrets_region }}
+      health_check_url: ${{ inputs.health_check_url }}
+      version_strategy: ${{ inputs.version_strategy }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
+
+  eks:
+    name: EKS
+    needs: [resolve, ci-node, ci-python, ci-java]
+    if: ${{ !cancelled() && !failure() && inputs.target == 'eks' && needs.resolve.outputs.should_deploy == 'true' }}
+    uses: ./.github/workflows/pipeline-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      ecr_repository: ${{ inputs.ecr_repository }}
+      cluster_name: ${{ inputs.cluster_name }}
+      namespace: ${{ inputs.namespace }}
+      deploy_method: ${{ inputs.deploy_method }}
+      deployment_name: ${{ inputs.deployment_name }}
+      container_name: ${{ inputs.container_name }}
+      manifest_path: ${{ inputs.manifest_path }}
+      kustomize_image_name: ${{ inputs.kustomize_image_name }}
+      helm_chart_path: ${{ inputs.helm_chart_path }}
+      helm_release_name: ${{ inputs.helm_release_name }}
+      helm_values_file: ${{ inputs.helm_values_file }}
+      app_path: ${{ inputs.app_path }}
+      dockerfile: ${{ inputs.dockerfile }}
+      build_args: ${{ inputs.build_args }}
+      platforms: ${{ inputs.platforms }}
+      rollout_timeout: ${{ inputs.rollout_timeout }}
+      aws_region: ${{ inputs.aws_region }}
+      version_strategy: ${{ inputs.version_strategy }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  lambda:
+    name: Lambda
+    needs: [resolve, ci-node, ci-python, ci-java]
+    if: ${{ !cancelled() && !failure() && inputs.target == 'lambda' && needs.resolve.outputs.should_deploy == 'true' }}
+    uses: ./.github/workflows/pipeline-lambda.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      function_name: ${{ inputs.function_name }}
+      ecr_repository: ${{ inputs.ecr_repository }}
+      app_path: ${{ inputs.app_path }}
+      dockerfile: ${{ inputs.dockerfile }}
+      build_args: ${{ inputs.build_args }}
+      platforms: ${{ inputs.platforms }}
+      alias: ${{ inputs.alias }}
+      aws_region: ${{ inputs.aws_region }}
+      version_strategy: ${{ inputs.version_strategy }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  static:
+    name: Static site
+    needs: resolve
+    if: inputs.target == 'static' && needs.resolve.outputs.should_deploy == 'true'
+    uses: ./.github/workflows/pipeline-static.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      framework: ${{ inputs.framework }}
+      node_version: ${{ fromJSON(inputs.node_versions)[0] }}
+      package_manager: ${{ inputs.package_manager }}
+      app_path: ${{ inputs.app_path }}
+      build_output: ${{ inputs.build_output }}
+      build_script: ${{ inputs.build_script }}
+      run_test: ${{ inputs.run_test }}
+      bucket: ${{ inputs.bucket }}
+      destination_prefix: ${{ inputs.destination_prefix }}
+      distribution_id: ${{ inputs.distribution_id }}
+      aws_region: ${{ inputs.aws_region }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  # A pull request still has to build and test the front end, which for the
+  # static target lives inside pipeline-static rather than a separate CI job.
+  static-verify:
+    name: CI (static site)
+    needs: resolve
+    if: inputs.target == 'static' && needs.resolve.outputs.should_deploy != 'true'
+    uses: ./.github/workflows/ci-node.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      framework: ${{ inputs.framework }}
+      node_versions: ${{ inputs.node_versions }}
+      package_manager: ${{ inputs.package_manager }}
+      app_path: ${{ inputs.app_path }}
+      target_env: ${{ inputs.environment }}
+      run_test: ${{ inputs.run_test }}
+      aws_region: ${{ inputs.aws_region }}
+      codeartifact_domain: ${{ inputs.codeartifact_domain }}
+      codeartifact_repository: ${{ inputs.codeartifact_repository }}
+      codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+      codeartifact_namespace: ${{ inputs.codeartifact_namespace }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}

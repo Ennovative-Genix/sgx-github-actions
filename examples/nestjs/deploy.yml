@@ -25,43 +25,31 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  APP_PATH: packages/api
-
 jobs:
-  ci:
-    name: CI
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
+  ci-cd:
+    name: CI/CD
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy.yml@v1
     permissions:
       id-token: write
       contents: read
     with:
-      framework: nestjs
-      node_versions: '["20.x"]'
+      target: ec2
+      environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
       app_path: packages/api
-      target_env: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-      test_script: "test:cov"
+
+      run_ci: true
+      ci_language: node
+      framework: nestjs
+
       # Private @sgx/* packages resolve through CodeArtifact rather than npmjs.
+      # CI jobs have no environment, so the region has to be explicit here.
       aws_region: us-east-1
       codeartifact_domain: sgx
       codeartifact_repository: npm-store
       codeartifact_namespace: sgx
-    secrets:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
-  deploy:
-    name: Deploy
-    needs: ci
-    if: github.event_name == 'push'
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-ec2.yml@v1
-    permissions:
-      id-token: write
-      contents: read
-    with:
-      environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
       docker_image_name: orders-api
       s3_path: orders-api/builds
-      app_path: packages/api
       health_check_url: http://localhost:3000/health
       build_args: |
         NODE_ENV=production

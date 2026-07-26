@@ -100,7 +100,14 @@ against the runner workspace, which holds the *consumer's* code. Composite
 actions in this repository are therefore always referenced as
 `Ennovative-Genix/sgx-github-actions/actions/<name>@<ref>`.
 
-**Reusable workflows nest four deep, and pipelines already use two.**
-`pipeline-eks.yml` → `build-docker-ecr.yml` is two. A consumer wrapping a pipeline
-in their own reusable workflow makes three. There is room, but not unlimited
-room.
+**Reusable workflows nest four levels, and the entry points spend all four.**
+`consumer → deploy.yml → pipeline-ec2.yml → build-docker-s3.yml` is the limit,
+so nothing new can be inserted below an entry point, and a consumer cannot wrap
+`deploy.yml` in a reusable workflow of their own. Repositories that need to wrap
+call the `pipeline-*` workflow directly, which leaves one level spare.
+`scripts/check-nesting-depth.py` enforces this in CI, because the failure would
+otherwise surface at runtime in the consumer's repository rather than here.
+
+This is the strongest argument for pushing new shared logic *down* into a
+composite action rather than *up* into another workflow: actions nest ten deep
+and cost no runner.

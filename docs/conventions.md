@@ -34,7 +34,13 @@ repository is free to nest, and `actions/` does.
 | `publish-` | stage | Push a package to a registry | `publish-npm.yml`, `publish-pypi.yml`, `publish-maven.yml` |
 | `deploy-` | stage | Ship to one AWS service | `deploy-eks.yml`, `deploy-lambda.yml`, `deploy-s3-cloudfront.yml` |
 | `rollback-` | stage | Undo a deployment | `rollback-ec2.yml`, `rollback-eks.yml`, `rollback-lambda.yml` |
-| `pipeline-` | pipeline | Chain stages end to end | `pipeline-ec2.yml`, `pipeline-eks.yml`, `pipeline-lambda.yml`, `pipeline-static.yml` |
+| `pipeline-` | pipeline | Chain stages end to end for one target | `pipeline-ec2.yml`, `pipeline-eks.yml`, `pipeline-lambda.yml`, `pipeline-static.yml` |
+| *(none)* | entry point | Dispatch to a pipeline on one argument | `deploy.yml`, `publish.yml` |
+
+Entry points carry no prefix, deliberately: they are the front door, and the
+unprefixed name is what a consumer types. There should be very few of them —
+one per product shape, not one per technology. A third would need to justify
+itself against adding a `target` value to `deploy.yml`.
 
 The `name:` inside the file uses title case with a hyphen separator —
 `name: Deploy - EKS` — because that string is what appears in the Actions UI and
@@ -100,9 +106,29 @@ bump to `v2`.
 ### Cutting a release
 
 ```bash
-git tag -a v1.4.2 -m "Add health checks to the EC2 start stage"
+git tag v1.4.2
 git push origin v1.4.2
 ```
+
+**Use a lightweight tag. Never `git tag -a`.** Workflows in this repository call
+each other by relative path (`publish.yml` fans out to `./.github/workflows/publish-npm.yml`,
+`pipeline-ec2.yml` to its stages, and so on). When a consumer pins to an
+annotated tag, GitHub Actions resolves those relative paths against the tag
+*object* SHA rather than the commit it points at, and the nested call fails at
+parse time:
+
+```
+error parsing called workflow
+".github/workflows/deploy.yml"
+-> "Ennovative-Genix/sgx-github-actions/.github/workflows/publish.yml@v2.0.0" (source tag with sha:5fdacf41...)
+--> "./.github/workflows/publish-npm.yml"
+: workflow was not found.
+```
+
+The tag looks fine — the file is right there in the tree — and calling
+`publish.yml` directly still works, so this only surfaces once a consumer
+reaches a nested workflow. Recovering means deleting and republishing the tag,
+which every pinned consumer sees. Tag lightweight the first time.
 
 `release.yml` takes it from there: it validates the tag shape, runs
 `scripts/check-internal-refs.sh`, force-moves `v1` and `v1.4` onto the commit, and

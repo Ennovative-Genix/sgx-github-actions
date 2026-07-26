@@ -58,42 +58,48 @@ runs:
           elif [ -f pyproject.toml ]; then
             sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' pyproject.toml | head -n1
           elif [ -f pom.xml ]; then
-            # First <version> under <project> is the project version; the ones
-            # that follow belong to dependencies.
-            sed -n 's:.*<version>\(.*\)</version>.*:\1:p' pom.xml | head -n1 | sed 's/-SNAPSHOT//'
+            # Parsed rather than grepped: a <parent> block declares a version
+            # before the project's own, and dependencies declare more after it.
+            python3 "$GITHUB_ACTION_PATH/read-pom-version.py"
           fi
         }
 
-        base_version=""
         version=""
 
         if [ -n "$VERSION_OVERRIDE" ]; then
           version="$VERSION_OVERRIDE"
-          base_version="${version%%-*}"
 
         elif [ "$VERSION_STRATEGY" = "run-number" ]; then
-          base_version="0.0.${GITHUB_RUN_NUMBER}"
-          version="$base_version"
+          version="0.0.${GITHUB_RUN_NUMBER}"
 
         elif { [ "$VERSION_STRATEGY" = "tag" ] || [ "$VERSION_STRATEGY" = "auto" ]; } && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
           version="${GITHUB_REF_NAME#v}"
-          base_version="${version%%-*}"
 
         else
-          base_version="$(read_manifest_version)"
-          if [ -z "$base_version" ]; then
+          manifest_version="$(read_manifest_version)"
+          if [ -z "$manifest_version" ]; then
             echo "::warning title=No manifest version::Could not read a version from package.json, pyproject.toml or pom.xml; defaulting to 0.0.0."
-            base_version="0.0.0"
+            manifest_version="0.0.0"
           fi
 
           if [ "$VERSION_STRATEGY" = "manifest" ]; then
-            version="$base_version"
-          elif [ -n "$TARGET_ENV" ]; then
-            version="${base_version}-${TARGET_ENV}.${GITHUB_RUN_NUMBER}"
+            # Published verbatim, so a Maven -SNAPSHOT or a PEP 440 suffix in the
+            # manifest survives rather than being silently promoted to a release.
+            version="$manifest_version"
           else
-            version="${base_version}-${GITHUB_RUN_NUMBER}"
+            # An existing qualifier is replaced, not appended to: a pom at
+            # 1.5.0-SNAPSHOT must yield 1.5.0-dev.87, never 1.5.0-SNAPSHOT-dev.87.
+            release_core="${manifest_version%%-*}"
+            if [ -n "$TARGET_ENV" ]; then
+              version="${release_core}-${TARGET_ENV}.${GITHUB_RUN_NUMBER}"
+            else
+              version="${release_core}-${GITHUB_RUN_NUMBER}"
+            fi
           fi
         fi
+
+        base_version="${version%%-*}"
+        base_version="${base_version%%+*}"
 
         case "$version" in
           *-*) is_prerelease="true" ;;

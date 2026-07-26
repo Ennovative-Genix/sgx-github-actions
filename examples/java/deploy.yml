@@ -1,8 +1,8 @@
-# Java (Maven) service: build and test on a JDK matrix, publish the library to
-# CodeArtifact on a tag, deploy the service to EKS.
+# Java (Maven) service deployed to EKS with Helm, and published to CodeArtifact
+# on a tag.
 # Copy to .github/workflows/deploy.yml in your application repository.
 #
-# For Gradle, set build_tool: gradle throughout.
+# For Gradle, set build_tool: gradle in both jobs.
 
 name: CI/CD
 
@@ -21,52 +21,26 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    name: CI
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-java.yml@v1
+  ci-cd:
+    name: CI/CD
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy.yml@v1
     permissions:
       id-token: write
       contents: read
     with:
+      target: eks
+      environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+
+      run_ci: true
+      ci_language: java
       java_versions: '["17", "21"]'
       build_tool: maven
-      run_test: true
-      artifact_name: service-jar
+
       aws_region: us-east-1
       codeartifact_domain: sgx
       codeartifact_repository: maven-store
-    secrets:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
-  publish:
-    name: Publish library
-    needs: ci
-    if: startsWith(github.ref, 'refs/tags/v')
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/publish-maven.yml@v1
-    permissions:
-      id-token: write
-      contents: read
-    with:
-      environment: prod
-      build_tool: maven
-      # version_strategy: auto takes the version straight from the git tag.
-      version_strategy: auto
-      run_test: false
-      codeartifact_domain: sgx
-      codeartifact_repository: maven-store
-    secrets:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-
-  deploy:
-    name: Deploy
-    needs: ci
-    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-eks.yml@v1
-    permissions:
-      id-token: write
-      contents: read
-    with:
-      environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
       ecr_repository: sgx/ledger-service
       cluster_name: sgx-${{ github.ref_name == 'main' && 'prod' || 'dev' }}
       namespace: finance
@@ -74,5 +48,22 @@ jobs:
       helm_chart_path: deploy/chart
       helm_release_name: ledger-service
       helm_values_file: deploy/chart/values-${{ github.ref_name == 'main' && 'prod' || 'dev' }}.yaml
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  publish:
+    name: Publish library
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/publish.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      ecosystem: maven
+      java_versions: '["17", "21"]'
+      build_tool: maven
+      aws_region: us-east-1
+      codeartifact_domain: sgx
+      codeartifact_repository: maven-store
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}

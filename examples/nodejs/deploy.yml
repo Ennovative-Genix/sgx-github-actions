@@ -1,5 +1,8 @@
 # Node.js service deployed to EC2.
 # Copy to .github/workflows/deploy.yml in your application repository.
+#
+# `mode` defaults to auto: a pull request runs CI only, a push runs CI and
+# deploys.
 
 name: CI/CD
 
@@ -17,8 +20,8 @@ on:
         options: [dev, qa, uat, stg, prod]
 
 concurrency:
-  # One deployment per branch at a time. Never cancel an in-flight deployment:
-  # a half-applied rollout is worse than a queued one.
+  # One run per branch. Cancel superseded pull request builds, never cancel a
+  # deployment mid-flight.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -26,56 +29,20 @@ permissions:
   contents: read
 
 jobs:
-  resolve:
-    name: Resolve environment
-    runs-on: ubuntu-latest
-    outputs:
-      environment: ${{ steps.env.outputs.name }}
-      deployable: ${{ steps.env.outputs.deployable }}
-    steps:
-      - id: env
-        env:
-          MANUAL_ENV: ${{ inputs.environment }}
-        run: |
-          set -euo pipefail
-
-          if [ -n "$MANUAL_ENV" ]; then
-            name="$MANUAL_ENV"
-          else
-            case "$GITHUB_REF_NAME" in
-              main)    name=prod ;;
-              staging) name=stg ;;
-              develop) name=dev ;;
-              *)       name=dev ;;
-            esac
-          fi
-
-          deployable=true
-          [ "$GITHUB_EVENT_NAME" = "pull_request" ] && deployable=false
-
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-          echo "deployable=$deployable" >> "$GITHUB_OUTPUT"
-
-  ci:
-    name: CI
-    needs: resolve
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
-    with:
-      framework: node
-      node_versions: '["20.x", "22.x"]'
-      app_path: .
-      target_env: ${{ needs.resolve.outputs.environment }}
-
-  deploy:
-    name: Deploy
-    needs: [resolve, ci]
-    if: needs.resolve.outputs.deployable == 'true'
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-ec2.yml@v1
+  ci-cd:
+    name: CI/CD
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy.yml@v1
     permissions:
       id-token: write
       contents: read
     with:
-      environment: ${{ needs.resolve.outputs.environment }}
+      target: ec2
+      environment: ${{ inputs.environment || (github.ref_name == 'main' && 'prod') || (github.ref_name == 'staging' && 'stg') || 'dev' }}
+
+      run_ci: true
+      ci_language: node
+      node_versions: '["20.x", "22.x"]'
+
       docker_image_name: billing-api
       s3_path: billing-api/builds
       health_check_url: http://localhost:8080/health

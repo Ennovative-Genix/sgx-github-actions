@@ -17,28 +17,20 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: Verify
-    if: github.event_name == 'pull_request'
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
-    with:
-      framework: react
-      node_versions: '["20.x", "22.x"]'
-      package_manager: pnpm
-      target_env: dev
-
-  deploy:
-    name: Deploy
-    if: github.event_name == 'push'
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-static.yml@v1
+  ci-cd:
+    name: CI/CD
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy.yml@v1
     permissions:
       id-token: write
       contents: read
     with:
-      environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name == 'staging' && 'stg' || 'dev' }}
+      target: static
+      environment: ${{ (github.ref_name == 'main' && 'prod') || (github.ref_name == 'staging' && 'stg') || 'dev' }}
+
       framework: react
-      node_version: "20.x"
+      node_versions: '["20.x"]'
       package_manager: pnpm
+
       # Vite's default; Create React App uses "build".
       build_output: dist
     secrets:

@@ -1,0 +1,79 @@
+# Publishing a library to CodeArtifact — npm, PyPI or Maven, one call.
+# Copy to .github/workflows/release.yml in your library repository.
+#
+# `mode` defaults to auto, which reads the trigger:
+#
+#   pull request  -> verify   build, test, and a dry-run publish
+#   push to main  -> snapshot prerelease version, e.g. 1.4.2-dev.87
+#   tag v1.4.3    -> release  version 1.4.3, from the tag
+#
+# Switching ecosystem is a one-line change. See the notes at the bottom.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/publish.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      ecosystem: npm
+
+      # CI jobs have no GitHub environment, so they cannot read AWS_REGION from
+      # one. This is the only always-required input beyond the CodeArtifact
+      # coordinates.
+      aws_region: us-east-1
+
+      codeartifact_domain: sgx
+      codeartifact_repository: npm-store
+      codeartifact_namespace: sgx
+
+      # Defaults shown for reference; delete the ones you do not change.
+      # app_path: .
+      # node_versions: '["20.x", "22.x"]'   # first is used to publish
+      # package_manager: npm                # npm | yarn | pnpm
+      # release_environment: prod           # protect this one with reviewers
+      # snapshot_environment: dev
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+# ---------------------------------------------------------------------------
+# For PyPI
+# ---------------------------------------------------------------------------
+#   ecosystem: pypi
+#   codeartifact_repository: pypi-store
+#   python_versions: '["3.11", "3.12"]'
+#   (drop codeartifact_namespace — npm only)
+#
+#   The snapshot environment name lands in the version, so it has to be a
+#   PEP 440 pre-release segment: dev, a, b or rc. An environment named `qa`
+#   would produce 1.4.2-qa.87, which the build rejects.
+#
+# ---------------------------------------------------------------------------
+# For Maven
+# ---------------------------------------------------------------------------
+#   ecosystem: maven
+#   codeartifact_repository: maven-store
+#   java_versions: '["17", "21"]'
+#   build_tool: maven                       # or gradle
+#   (drop codeartifact_namespace — npm only)
+#
+#   Snapshots publish the pom's version verbatim, so keep the pom on
+#   1.5.0-SNAPSHOT during development. Releases take the version from the tag
+#   and run `versions:set`, so no release commit is needed to bump the pom.

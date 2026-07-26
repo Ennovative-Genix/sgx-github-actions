@@ -90,6 +90,12 @@ jobs:
       - name: Verify every internal action reference resolves and agrees
         run: bash scripts/check-internal-refs.sh
 
+      - name: Verify no call chain exceeds GitHub's nesting limit
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --disable-pip-version-check pyyaml
+          python scripts/check-nesting-depth.py
+
   contracts:
     name: Check documented contracts
     runs-on: ubuntu-latest
@@ -98,6 +104,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Entry-point input tables must match the workflows
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --disable-pip-version-check pyyaml
+          python scripts/check-documented-inputs.py
 
       - name: Every reusable workflow and action must be documented
         run: |

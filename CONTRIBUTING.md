@@ -12,6 +12,15 @@ building:
 - Needs its own environment, approval gate, matrix, or runner → **reusable workflow** in `.github/workflows/`
 - Runs inside somebody else's job → **composite action** in `actions/`
 
+Prefer extending an existing entry point to adding a new one. A new deployment
+target is a `target` value in `deploy.yml` plus a `pipeline-*` workflow; a new
+package format is an `ecosystem` value in `publish.yml` plus a `publish-*`
+workflow. A third entry point needs to justify why it is not one of those.
+
+Nothing new can be inserted *between* an entry point and a stage — that chain is
+already at GitHub's four-level nesting limit, and `scripts/check-nesting-depth.py`
+fails the build if it grows.
+
 ## Rules
 
 Full detail in [docs/conventions.md](docs/conventions.md) and
@@ -72,9 +81,12 @@ verified when there is none.
 ## Releasing
 
 ```bash
-git tag -a v1.4.2 -m "Add health checks to the EC2 start stage"
+git tag v1.4.2
 git push origin v1.4.2
 ```
+
+Lightweight, not `git tag -a`. Annotated tags break consumers — see
+[conventions.md](docs/conventions.md#cutting-a-release).
 
 `release.yml` moves `v1` and `v1.4` onto the commit and opens a GitHub Release.
 Prereleases (`v1.5.0-rc.1`) publish a release but deliberately do not move the

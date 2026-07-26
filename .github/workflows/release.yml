@@ -86,8 +86,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Lightweight tags, deliberately. Several workflows here call nested
+          # reusable workflows by relative path (`uses: ./.github/workflows/...`).
+          # When a consumer pins to an annotated tag, Actions resolves those
+          # relative paths against the tag *object* SHA instead of the commit it
+          # points at, and every nested call fails with "workflow was not found".
+          # `^{commit}` peels $TAG so the floating tags land on the commit even
+          # though $TAG itself may still be annotated.
           for floating in "$MAJOR" "$MINOR"; do
-            git tag -fa "$floating" -m "Release $TAG" "$TAG"
+            git tag -f "$floating" "${TAG}^{commit}"
             git push --force origin "refs/tags/${floating}"
             echo "Moved $floating to $TAG"
           done

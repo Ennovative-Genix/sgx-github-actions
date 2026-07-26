@@ -84,7 +84,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish to CodeArtifact
+    name: Publish Maven
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     timeout-minutes: ${{ inputs.timeout_minutes }}

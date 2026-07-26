@@ -75,21 +75,37 @@ On `prod`, add required reviewers and restrict deployment branches to `main`.
 ## 3. Add the workflow
 
 Copy the closest file from [`examples/`](../examples/) into
-`.github/workflows/`. Pin to `@v1`:
+`.github/workflows/`. There is one call to make, pinned to `@v1`:
 
 ```yaml
-uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-ec2.yml@v1
+uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy.yml@v1
+with:
+  target: ec2          # ec2 | eks | lambda | static
+  environment: dev
 ```
 
-| Your stack | Start from |
-| --- | --- |
-| Node.js service on EC2 | `examples/nodejs/` |
-| NestJS API on EC2 | `examples/nestjs/` |
-| Angular front end | `examples/angular/` |
-| React front end | `examples/react/` |
-| Nx monorepo | `examples/nx/` |
-| Java service | `examples/java/` |
-| Python service or Lambda | `examples/python/` |
+or, for a library:
+
+```yaml
+uses: Ennovative-Genix/sgx-github-actions/.github/workflows/publish.yml@v1
+with:
+  ecosystem: npm       # npm | pypi | maven
+```
+
+| Your stack | Start from | Arguments |
+| --- | --- | --- |
+| Node.js service on EC2 | `examples/nodejs/` | `target: ec2`, `ci_language: node` |
+| NestJS API on EC2 | `examples/nestjs/` | `target: ec2`, `framework: nestjs` |
+| Angular front end | `examples/angular/` | `target: static`, `framework: angular` |
+| React front end | `examples/react/` | `target: static`, `framework: react` |
+| Nx monorepo | `examples/nx/` | `target: eks`, `framework: nx` |
+| Java service | `examples/java/` | `target: eks`, `ci_language: java` |
+| Python service or Lambda | `examples/python/` | `target: lambda`, `ci_language: python` |
+| Library published to CodeArtifact | `examples/publishing/` | `ecosystem: npm \| pypi \| maven` |
+
+Call the entry point from your own workflow, not from another reusable workflow
+of your own — the chain already uses all four nesting levels GitHub allows. If
+you must wrap it, call the matching `pipeline-*` workflow instead.
 
 ## 4. Files your repository must provide
 
