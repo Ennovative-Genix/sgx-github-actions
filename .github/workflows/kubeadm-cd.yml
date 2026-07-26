@@ -174,6 +174,12 @@ jobs:
         run: |
           kubectl apply -f ${{ inputs.manifest_path }} -n ${NAMESPACE}
 
+      - name: Check Resources
+        run: |
+          kubectl get deployments -n ${NAMESPACE}
+          kubectl get svc -n ${NAMESPACE}
+          kubectl get pods -n ${NAMESPACE}
+
       - name: Update Deployment Image
         env:
           IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
@@ -197,3 +203,14 @@ jobs:
           kubectl rollout status deployment/${DEPLOYMENT_NAME} \
             -n ${NAMESPACE} \
             --timeout=300s
+
+      - name: Pod Status
+        run: |
+          kubectl get pods -n ${NAMESPACE}
+
+      - name: Describe Pods
+        if: failure()
+        run: |
+          kubectl describe pods -n ${NAMESPACE}
+
+          
