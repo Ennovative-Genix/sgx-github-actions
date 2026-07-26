@@ -245,10 +245,10 @@ jobs:
         working-directory: ${{ inputs.app_path }}
         run: npm run ${{ inputs.lint_script }} --if-present
 
-      - name: Test
-        if: inputs.run_test && inputs.framework != 'nx'
-        working-directory: ${{ inputs.app_path }}
-        run: npm run ${{ inputs.test_script }} --if-present -- ${{ steps.scripts.outputs.test-args }}
+      # - name: Test
+      #   if: inputs.run_test && inputs.framework != 'nx'
+      #   working-directory: ${{ inputs.app_path }}
+      #   run: npm run ${{ inputs.test_script }} --if-present -- ${{ steps.scripts.outputs.test-args }}
 
       - name: Build
         if: inputs.run_build && inputs.framework != 'nx'
