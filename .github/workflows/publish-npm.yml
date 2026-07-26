@@ -1,0 +1,173 @@
+name: Publish - npm
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub environment providing the CodeArtifact variables and approval rules."
+        required: true
+        type: string
+      app_path:
+        description: "Path to the package directory, relative to the repository root."
+        required: false
+        type: string
+        default: "."
+      node_version:
+        description: "Node.js version used to build and publish."
+        required: false
+        type: string
+        default: "20.x"
+      package_manager:
+        description: "npm, yarn or pnpm."
+        required: false
+        type: string
+        default: "npm"
+      build_script:
+        description: "npm script run before publishing. Leave empty to publish without building."
+        required: false
+        type: string
+        default: "build"
+      version:
+        description: "Version to publish. Leave empty to publish the version already in package.json."
+        required: false
+        type: string
+        default: ""
+      version_strategy:
+        description: "Passed to compute-version when `version` is empty: auto, tag, manifest or run-number."
+        required: false
+        type: string
+        default: "auto"
+      access:
+        description: "npm access level for scoped packages: restricted or public."
+        required: false
+        type: string
+        default: "restricted"
+      dry_run:
+        description: "Run every step but stop short of publishing."
+        required: false
+        type: boolean
+        default: false
+      aws_region:
+        description: "Region of the CodeArtifact domain. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain:
+        description: "CodeArtifact domain to publish into."
+        required: true
+        type: string
+      codeartifact_repository:
+        description: "CodeArtifact repository to publish into."
+        required: true
+        type: string
+      codeartifact_domain_owner:
+        description: "AWS account id owning the CodeArtifact domain."
+        required: false
+        type: string
+        default: ""
+      codeartifact_namespace:
+        description: "npm scope bound to CodeArtifact, without the leading @."
+        required: false
+        type: string
+        default: ""
+      timeout_minutes:
+        description: "Job timeout."
+        required: false
+        type: number
+        default: 20
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM role for OIDC."
+        required: true
+    outputs:
+      version:
+        description: "The version that was published."
+        value: ${{ jobs.publish.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to CodeArtifact
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        id: aws
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        with:
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: publish-npm
+
+      - name: Compute version
+        id: version
+        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@main
+        with:
+          strategy: ${{ inputs.version_strategy }}
+          working-directory: ${{ inputs.app_path }}
+          environment: ${{ inputs.environment }}
+          version-override: ${{ inputs.version }}
+
+      - name: Setup Node and install dependencies
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@main
+        with:
+          node-version: ${{ inputs.node_version }}
+          package-manager: ${{ inputs.package_manager }}
+          working-directory: ${{ inputs.app_path }}
+          codeartifact-domain: ${{ inputs.codeartifact_domain }}
+          codeartifact-repository: ${{ inputs.codeartifact_repository }}
+          codeartifact-domain-owner: ${{ inputs.codeartifact_domain_owner }}
+          codeartifact-region: ${{ steps.aws.outputs.region }}
+          codeartifact-namespace: ${{ inputs.codeartifact_namespace }}
+
+      - name: Build
+        if: inputs.build_script != ''
+        working-directory: ${{ inputs.app_path }}
+        run: npm run ${{ inputs.build_script }} --if-present
+
+      - name: Set package version
+        working-directory: ${{ inputs.app_path }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # --allow-same-version keeps reruns idempotent when the manifest is
+          # already at the computed version.
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish
+        working-directory: ${{ inputs.app_path }}
+        env:
+          ACCESS: ${{ inputs.access }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          args=(--access "$ACCESS")
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+
+          npm publish "${args[@]}"
+
+          {
+            echo "### npm package published"
+            echo ""
+            echo "- Version: \`${VERSION}\`"
+            echo "- Repository: \`${{ inputs.codeartifact_domain }}/${{ inputs.codeartifact_repository }}\`"
+            echo "- Dry run: \`${DRY_RUN}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

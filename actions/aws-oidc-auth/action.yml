@@ -1,0 +1,76 @@
+name: "AWS OIDC Auth"
+description: "Resolve the target AWS region and assume an IAM role using GitHub OIDC (no long-lived keys)."
+
+inputs:
+  role-arn:
+    description: "IAM role ARN to assume."
+    required: true
+  region:
+    description: "Explicit AWS region. Takes priority over every fallback."
+    required: false
+    default: ""
+  fallback-region:
+    description: "Region used when `region` is empty. Wire this to the environment variable `vars.AWS_REGION`. One of `region` or `fallback-region` must resolve to a value."
+    required: false
+    default: ""
+  session-name:
+    description: "Short label folded into the STS session name. Keep it under 20 characters."
+    required: false
+    default: "generic"
+  mask-account-id:
+    description: "Mask the AWS account id in logs."
+    required: false
+    default: "true"
+
+outputs:
+  region:
+    description: "The region that was resolved and configured."
+    value: ${{ steps.resolve.outputs.region }}
+  account-id:
+    description: "AWS account id of the assumed role."
+    value: ${{ steps.whoami.outputs.account-id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve AWS region
+      id: resolve
+      shell: bash
+      env:
+        INPUT_REGION: ${{ inputs.region }}
+        INPUT_FALLBACK_REGION: ${{ inputs.fallback-region }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "$INPUT_REGION" ]; then
+          region="$INPUT_REGION"
+          source="workflow input"
+        elif [ -n "$INPUT_FALLBACK_REGION" ]; then
+          region="$INPUT_FALLBACK_REGION"
+          source="AWS_REGION variable"
+        else
+          # Deliberately fatal. Guessing a region -- from a branch name or a
+          # hardcoded default -- means a deployment can silently land in the
+          # wrong account, which is far worse than a failed run.
+          echo "::error title=No AWS region::Set an AWS_REGION variable on the GitHub environment, or pass the aws_region workflow input."
+          exit 1
+        fi
+
+        echo "region=$region" >> "$GITHUB_OUTPUT"
+        echo "Region '$region' resolved from $source."
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-arn }}
+        aws-region: ${{ steps.resolve.outputs.region }}
+        role-session-name: gha-${{ inputs.session-name }}-${{ github.run_id }}
+        mask-aws-account-id: ${{ inputs.mask-account-id }}
+
+    - name: Record caller identity
+      id: whoami
+      shell: bash
+      run: |
+        set -euo pipefail
+        account_id="$(aws sts get-caller-identity --query Account --output text)"
+        echo "account-id=$account_id" >> "$GITHUB_OUTPUT"

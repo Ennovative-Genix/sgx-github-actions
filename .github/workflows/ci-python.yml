@@ -1,0 +1,164 @@
+name: CI - Python
+
+on:
+  workflow_call:
+    inputs:
+      python_versions:
+        description: 'JSON array of Python versions to build against, e.g. ''["3.11","3.12"]''.'
+        required: false
+        type: string
+        default: '["3.12"]'
+      app_path:
+        description: "Path to the package directory, relative to the repository root."
+        required: false
+        type: string
+        default: "."
+      requirements_file:
+        description: "Requirements file to install. Ignored for pyproject projects."
+        required: false
+        type: string
+        default: "requirements.txt"
+      extras:
+        description: "Optional dependency group installed for a pyproject project, e.g. 'dev'."
+        required: false
+        type: string
+        default: "dev"
+      run_lint:
+        description: "Run the lint command."
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: "Run the test command."
+        required: false
+        type: boolean
+        default: true
+      lint_command:
+        description: "Lint command."
+        required: false
+        type: string
+        default: "ruff check ."
+      test_command:
+        description: "Test command."
+        required: false
+        type: string
+        default: "pytest -q"
+      build_package:
+        description: "Build an sdist and wheel into dist/."
+        required: false
+        type: boolean
+        default: false
+      artifact_name:
+        description: "Upload dist/ under this artifact name. Leave empty to skip."
+        required: false
+        type: string
+        default: ""
+      artifact_retention_days:
+        description: "How long to keep the uploaded artifact."
+        required: false
+        type: number
+        default: 7
+      aws_region:
+        description: "Region used for CodeArtifact."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain:
+        description: "CodeArtifact domain for private dependencies. Leave empty to use PyPI."
+        required: false
+        type: string
+        default: ""
+      codeartifact_repository:
+        description: "CodeArtifact repository."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "AWS account id owning the CodeArtifact domain."
+        required: false
+        type: string
+        default: ""
+      runs_on:
+        description: "Runner label."
+        required: false
+        type: string
+        default: "ubuntu-latest"
+      timeout_minutes:
+        description: "Job timeout."
+        required: false
+        type: number
+        default: 30
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM role for OIDC. Only needed when pulling from CodeArtifact."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (Python ${{ matrix.python-version }})
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python_versions) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        if: inputs.codeartifact_domain != ''
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        with:
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: ci-python
+
+      - name: Setup Python and install dependencies
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-python@main
+        with:
+          python-version: ${{ matrix.python-version }}
+          working-directory: ${{ inputs.app_path }}
+          requirements-file: ${{ inputs.requirements_file }}
+          extras: ${{ inputs.extras }}
+          codeartifact-domain: ${{ inputs.codeartifact_domain }}
+          codeartifact-repository: ${{ inputs.codeartifact_repository }}
+          codeartifact-domain-owner: ${{ inputs.codeartifact_domain_owner }}
+          codeartifact-region: ${{ inputs.aws_region }}
+
+      - name: Lint
+        if: inputs.run_lint
+        working-directory: ${{ inputs.app_path }}
+        run: ${{ inputs.lint_command }}
+
+      - name: Test
+        if: inputs.run_test
+        working-directory: ${{ inputs.app_path }}
+        run: ${{ inputs.test_command }}
+
+      - name: Build distribution
+        if: inputs.build_package
+        working-directory: ${{ inputs.app_path }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Upload distribution
+        if: inputs.artifact_name != '' && inputs.build_package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}-py${{ matrix.python-version }}
+          path: ${{ inputs.app_path }}/dist
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error

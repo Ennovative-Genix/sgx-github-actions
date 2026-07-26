@@ -1,0 +1,69 @@
+name: "ECR Login"
+description: "Authenticate Docker against Amazon ECR and optionally create the repository if it does not exist yet."
+
+inputs:
+  repository:
+    description: "ECR repository name. Required when `create-repository` is true."
+    required: false
+    default: ""
+  create-repository:
+    description: "Create the repository when missing, with image scanning and immutable tags enabled."
+    required: false
+    default: "false"
+  registry-id:
+    description: "AWS account id of the registry. Defaults to the calling account."
+    required: false
+    default: ""
+  image-tag-mutability:
+    description: "MUTABLE or IMMUTABLE. Only applied when the repository is created by this action."
+    required: false
+    default: "MUTABLE"
+
+outputs:
+  registry:
+    description: "Registry host, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com."
+    value: ${{ steps.login.outputs.registry }}
+  repository-uri:
+    description: "Full repository URI. Empty when no repository name was supplied."
+    value: ${{ steps.ensure.outputs.repository-uri }}
+
+runs:
+  using: composite
+  steps:
+    - name: Log in to Amazon ECR
+      id: login
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registries: ${{ inputs.registry-id }}
+
+    - name: Ensure repository exists
+      id: ensure
+      shell: bash
+      env:
+        ECR_REPOSITORY: ${{ inputs.repository }}
+        CREATE_REPOSITORY: ${{ inputs.create-repository }}
+        TAG_MUTABILITY: ${{ inputs.image-tag-mutability }}
+        REGISTRY: ${{ steps.login.outputs.registry }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$ECR_REPOSITORY" ]; then
+          echo "repository-uri=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1; then
+          if [ "$CREATE_REPOSITORY" = "true" ]; then
+            echo "Creating ECR repository '$ECR_REPOSITORY'."
+            aws ecr create-repository \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-scanning-configuration scanOnPush=true \
+              --image-tag-mutability "$TAG_MUTABILITY" \
+              --encryption-configuration encryptionType=AES256 >/dev/null
+          else
+            echo "::error title=Missing ECR repository::'$ECR_REPOSITORY' does not exist. Create it or set create-repository: true."
+            exit 1
+          fi
+        fi
+
+        echo "repository-uri=${REGISTRY}/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"

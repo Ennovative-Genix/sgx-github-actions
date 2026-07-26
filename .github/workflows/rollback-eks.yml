@@ -1,0 +1,154 @@
+name: Rollback - EKS
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, qa, uat, stg, prod)."
+        required: true
+        type: string
+      cluster_name:
+        description: "EKS cluster name."
+        required: true
+        type: string
+      namespace:
+        description: "Kubernetes namespace."
+        required: false
+        type: string
+        default: "default"
+      deployment_name:
+        description: "Deployment to roll back."
+        required: true
+        type: string
+      strategy:
+        description: "undo (revert to a previous ReplicaSet) or image (pin an explicit image reference)."
+        required: false
+        type: string
+        default: "undo"
+      revision:
+        description: "Revision to revert to when strategy is 'undo'. Leave empty for the immediately previous one."
+        required: false
+        type: string
+        default: ""
+      image_uri:
+        description: "Image reference to pin. Required when strategy is 'image'."
+        required: false
+        type: string
+        default: ""
+      container_name:
+        description: "Container inside the Deployment. Defaults to deployment_name."
+        required: false
+        type: string
+        default: ""
+      rollout_timeout:
+        description: "How long to wait for the rollback to become ready."
+        required: false
+        type: string
+        default: "10m"
+      kubectl_version:
+        description: "kubectl version to install."
+        required: false
+        type: string
+        default: "v1.31.0"
+      aws_region:
+        description: "Region override. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication."
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Roll back EKS deployment
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 20
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS credentials
+        id: aws
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        with:
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: rollback-eks
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ inputs.kubectl_version }}
+
+      - name: Update kubeconfig
+        env:
+          CLUSTER_NAME: ${{ inputs.cluster_name }}
+          AWS_REGION: ${{ steps.aws.outputs.region }}
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Show rollout history
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          DEPLOYMENT_NAME: ${{ inputs.deployment_name }}
+        run: kubectl -n "$NAMESPACE" rollout history "deployment/${DEPLOYMENT_NAME}"
+
+      - name: Roll back
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          DEPLOYMENT_NAME: ${{ inputs.deployment_name }}
+          CONTAINER_NAME: ${{ inputs.container_name }}
+          STRATEGY: ${{ inputs.strategy }}
+          REVISION: ${{ inputs.revision }}
+          IMAGE_URI: ${{ inputs.image_uri }}
+        run: |
+          set -euo pipefail
+
+          case "$STRATEGY" in
+            undo)
+              args=(-n "$NAMESPACE" rollout undo "deployment/${DEPLOYMENT_NAME}")
+              [ -n "$REVISION" ] && args+=(--to-revision="$REVISION")
+              kubectl "${args[@]}"
+              ;;
+            image)
+              [ -n "$IMAGE_URI" ] || { echo "::error::strategy 'image' requires image_uri."; exit 1; }
+              container="${CONTAINER_NAME:-$DEPLOYMENT_NAME}"
+              kubectl -n "$NAMESPACE" set image \
+                "deployment/${DEPLOYMENT_NAME}" \
+                "${container}=${IMAGE_URI}"
+              ;;
+            *)
+              echo "::error::strategy must be 'undo' or 'image'."
+              exit 1
+              ;;
+          esac
+
+      - name: Wait for rollback
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          DEPLOYMENT_NAME: ${{ inputs.deployment_name }}
+          ROLLOUT_TIMEOUT: ${{ inputs.rollout_timeout }}
+        run: |
+          set -euo pipefail
+
+          if ! kubectl -n "$NAMESPACE" rollout status "deployment/${DEPLOYMENT_NAME}" --timeout="$ROLLOUT_TIMEOUT"; then
+            kubectl -n "$NAMESPACE" describe "deployment/${DEPLOYMENT_NAME}" || true
+            echo "::error title=Rollback failed::'${DEPLOYMENT_NAME}' did not become ready. Manual intervention is required."
+            exit 1
+          fi
+
+          {
+            echo "### EKS rollback complete"
+            echo ""
+            echo "- Deployment: \`${DEPLOYMENT_NAME}\`"
+            echo "- Namespace: \`${NAMESPACE}\`"
+            echo "- Strategy: \`${{ inputs.strategy }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

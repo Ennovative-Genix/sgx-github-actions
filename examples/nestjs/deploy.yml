@@ -1,0 +1,71 @@
+# NestJS API inside a monorepo, deployed to EC2, pulling private packages from
+# CodeArtifact.
+# Copy to .github/workflows/deploy.yml in your application repository.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [develop, main]
+    # Only rebuild when this application or the shared libraries it uses change.
+    paths:
+      - "packages/api/**"
+      - "packages/shared/**"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "packages/api/**"
+      - "packages/shared/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  APP_PATH: packages/api
+
+jobs:
+  ci:
+    name: CI
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      framework: nestjs
+      node_versions: '["20.x"]'
+      app_path: packages/api
+      target_env: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      test_script: "test:cov"
+      # Private @sgx/* packages resolve through CodeArtifact rather than npmjs.
+      aws_region: us-east-1
+      codeartifact_domain: sgx
+      codeartifact_repository: npm-store
+      codeartifact_namespace: sgx
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  deploy:
+    name: Deploy
+    needs: ci
+    if: github.event_name == 'push'
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-ec2.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      docker_image_name: orders-api
+      s3_path: orders-api/builds
+      app_path: packages/api
+      health_check_url: http://localhost:3000/health
+      build_args: |
+        NODE_ENV=production
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}

@@ -1,0 +1,63 @@
+name: "Runner Disk Cleanup"
+description: "Reclaim disk space on a GitHub-hosted runner before a large build."
+
+# This is deliberately a composite action rather than a reusable workflow.
+# Every job gets a fresh runner, so freeing disk in a separate job frees disk on
+# a machine the build never touches. It only helps when it runs as a step inside
+# the job that is short on space.
+
+inputs:
+  remove-toolcache:
+    description: "Remove the preinstalled language toolcache. Skip this when a later step needs setup-node/setup-java to hit its cache."
+    required: false
+    default: "false"
+  prune-docker:
+    description: "Prune all Docker images, containers, volumes and build cache."
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Free up disk space
+      shell: bash
+      env:
+        REMOVE_TOOLCACHE: ${{ inputs.remove-toolcache }}
+        PRUNE_DOCKER: ${{ inputs.prune-docker }}
+      run: |
+        set -euo pipefail
+
+        echo "::group::Disk usage before cleanup"
+        df -h /
+        echo "::endgroup::"
+
+        echo "::group::Removing unused preinstalled toolchains"
+        # `|| true` throughout: the exact set of preinstalled directories drifts
+        # between runner images and a missing path is not a failure.
+        sudo rm -rf /usr/share/dotnet || true
+        sudo rm -rf /usr/local/lib/android || true
+        sudo rm -rf /opt/ghc || true
+        sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+        sudo rm -rf /usr/local/share/boost || true
+        sudo rm -rf /usr/share/swift || true
+        sudo rm -rf /usr/local/share/powershell || true
+        sudo rm -rf /usr/local/.ghcup || true
+
+        if [ "$REMOVE_TOOLCACHE" = "true" ] && [ -n "${AGENT_TOOLSDIRECTORY:-}" ]; then
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+        fi
+
+        sudo apt-get clean || true
+        echo "::endgroup::"
+
+        if [ "$PRUNE_DOCKER" = "true" ]; then
+          echo "::group::Pruning Docker"
+          docker system prune -a -f --volumes || true
+          docker builder prune -a -f || true
+          echo "::endgroup::"
+        fi
+
+        echo "::group::Disk usage after cleanup"
+        df -h /
+        docker system df || true
+        echo "::endgroup::"

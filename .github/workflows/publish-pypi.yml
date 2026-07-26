@@ -1,0 +1,181 @@
+name: Publish - PyPI
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub environment providing the CodeArtifact variables and approval rules."
+        required: true
+        type: string
+      app_path:
+        description: "Path to the package directory, relative to the repository root."
+        required: false
+        type: string
+        default: "."
+      python_version:
+        description: "Python version used to build and publish."
+        required: false
+        type: string
+        default: "3.12"
+      version:
+        description: "Version to publish. Leave empty to publish the version already in pyproject.toml."
+        required: false
+        type: string
+        default: ""
+      version_strategy:
+        description: "Passed to compute-version when `version` is empty: auto, tag, manifest or run-number."
+        required: false
+        type: string
+        default: "auto"
+      dry_run:
+        description: "Build and validate the distribution but do not upload it."
+        required: false
+        type: boolean
+        default: false
+      aws_region:
+        description: "Region of the CodeArtifact domain. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain:
+        description: "CodeArtifact domain to publish into."
+        required: true
+        type: string
+      codeartifact_repository:
+        description: "CodeArtifact repository to publish into."
+        required: true
+        type: string
+      codeartifact_domain_owner:
+        description: "AWS account id owning the CodeArtifact domain."
+        required: false
+        type: string
+        default: ""
+      timeout_minutes:
+        description: "Job timeout."
+        required: false
+        type: number
+        default: 20
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM role for OIDC."
+        required: true
+    outputs:
+      version:
+        description: "The version that was published."
+        value: ${{ jobs.publish.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to CodeArtifact
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        id: aws
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        with:
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: publish-pypi
+
+      - name: Compute version
+        id: version
+        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@main
+        with:
+          strategy: ${{ inputs.version_strategy }}
+          working-directory: ${{ inputs.app_path }}
+          environment: ${{ inputs.environment }}
+          version-override: ${{ inputs.version }}
+
+      - name: Setup Python
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-python@main
+        with:
+          python-version: ${{ inputs.python_version }}
+          working-directory: ${{ inputs.app_path }}
+          install: "false"
+
+      - name: Authenticate twine against CodeArtifact
+        uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@main
+        with:
+          tool: twine
+          domain: ${{ inputs.codeartifact_domain }}
+          repository: ${{ inputs.codeartifact_repository }}
+          domain-owner: ${{ inputs.codeartifact_domain_owner }}
+          region: ${{ steps.aws.outputs.region }}
+
+      - name: Set package version
+        working-directory: ${{ inputs.app_path }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          version = os.environ["VERSION"]
+          path = pathlib.Path("pyproject.toml")
+
+          if not path.exists():
+              print("::warning title=No pyproject.toml::Skipping version rewrite; the build will use whatever the project declares.")
+              raise SystemExit(0)
+
+          # Only the first `version = "..."` is the package version. Dependency
+          # pins further down the file use the same syntax, so the count matters.
+          text = path.read_text(encoding="utf-8")
+          text, replaced = re.subn(
+              r'(?m)^(version\s*=\s*)"[^"]*"',
+              lambda match: f'{match.group(1)}"{version}"',
+              text,
+              count=1,
+          )
+
+          if replaced == 0:
+              raise SystemExit('No \'version = "..."\' line found in pyproject.toml')
+
+          path.write_text(text, encoding="utf-8")
+          print(f"pyproject.toml version set to {version}")
+          PY
+
+      - name: Build distribution
+        working-directory: ${{ inputs.app_path }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build twine
+          python -m build
+          twine check dist/*
+
+      - name: Publish
+        if: inputs.dry_run == false
+        working-directory: ${{ inputs.app_path }}
+        run: twine upload dist/*
+
+      - name: Summarise
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### Python package published"
+            echo ""
+            echo "- Version: \`${VERSION}\`"
+            echo "- Repository: \`${{ inputs.codeartifact_domain }}/${{ inputs.codeartifact_repository }}\`"
+            echo "- Dry run: \`${DRY_RUN}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

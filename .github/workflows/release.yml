@@ -1,0 +1,111 @@
+name: Release
+
+# Cutting a release means pushing a `vX.Y.Z` tag. This workflow then moves the
+# floating `vX` and `vX.Y` tags onto that commit, which is what consumers pin to.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z tag to (re)publish the floating tags for."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish floating tags
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Needed to move tags and create the GitHub Release.
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          tag="${INPUT_TAG:-$GITHUB_REF_NAME}"
+
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$'; then
+            echo "::error title=Bad tag::'$tag' is not a vX.Y.Z tag."
+            exit 1
+          fi
+
+          core="${tag#v}"
+          core="${core%%-*}"
+          major="v${core%%.*}"
+          minor="v${core%.*}"
+
+          # Prereleases are opt-in only: moving v1 onto a v1.3.0-rc.1 would ship
+          # a release candidate to every consumer pinned at v1.
+          case "$tag" in
+            *-*) prerelease="true" ;;
+            *)   prerelease="false" ;;
+          esac
+
+          {
+            echo "tag=$tag"
+            echo "major=$major"
+            echo "minor=$minor"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Releasing $tag (major=$major minor=$minor prerelease=$prerelease)"
+
+      - name: Verify internal action references
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/check-internal-refs.sh
+
+      - name: Move floating tags
+        if: steps.version.outputs.prerelease == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          MAJOR: ${{ steps.version.outputs.major }}
+          MINOR: ${{ steps.version.outputs.minor }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for floating in "$MAJOR" "$MINOR"; do
+            git tag -fa "$floating" -m "Release $TAG" "$TAG"
+            git push --force origin "refs/tags/${floating}"
+            echo "Moved $floating to $TAG"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            exit 0
+          fi
+
+          args=(--title "$TAG" --generate-notes)
+          [ "$PRERELEASE" = "true" ] && args+=(--prerelease)
+
+          gh release create "$TAG" "${args[@]}"

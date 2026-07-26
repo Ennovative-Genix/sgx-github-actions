@@ -1,0 +1,180 @@
+name: Rollback - EC2
+
+# Restores a previously archived image. Every build-docker-s3 run writes an
+# immutable `<s3_path>/<version>.tar.gz` object; this reloads one of them.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, qa, uat, stg, prod)."
+        required: true
+        type: string
+      docker_image_name:
+        description: "Docker image name."
+        required: true
+        type: string
+      s3_path:
+        description: "S3 key prefix the archives live under."
+        required: true
+        type: string
+      version:
+        description: "Version to restore, matching the archived object name. Either this or image_key is required."
+        required: false
+        type: string
+        default: ""
+      image_key:
+        description: "Exact S3 key to restore. Overrides `version`."
+        required: false
+        type: string
+        default: ""
+      app_path:
+        description: "Path to the application directory, relative to the repository root."
+        required: false
+        type: string
+        default: "."
+      compose_file:
+        description: "Compose file path, relative to app_path."
+        required: false
+        type: string
+        default: "docker-compose.yml"
+      port_mapping:
+        description: "Host-to-container port mapping, e.g. '8080:8080'. Defaults to the PORT_MAPPING environment variable."
+        required: false
+        type: string
+        default: ""
+      aws_region:
+        description: "Region override. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+      secrets_region:
+        description: "Region holding the Secrets Manager secret. Only needed when secrets live in a different region from the workload."
+        required: false
+        type: string
+        default: ""
+      health_check_url:
+        description: "URL curled on the instance after start-up. Leave empty to skip."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication."
+        required: true
+      EC2_INSTANCE_ID:
+        description: "Target EC2 Instance ID."
+        required: true
+      AWS_SECRETS_ARN:
+        description: "Secrets Manager ARN holding the .env contents."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve Target
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_key: ${{ steps.target.outputs.image-key }}
+
+    steps:
+      - name: Configure AWS credentials
+        id: aws
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        with:
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: rollback-ec2
+
+      - name: Resolve and verify the archive
+        id: target
+        env:
+          BUCKET: ${{ vars.S3_BUILD_BUCKET }}
+          S3_PATH: ${{ inputs.s3_path }}
+          VERSION: ${{ inputs.version }}
+          IMAGE_KEY: ${{ inputs.image_key }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$IMAGE_KEY" ]; then
+            key="$IMAGE_KEY"
+          elif [ -n "$VERSION" ]; then
+            key="${S3_PATH%/}/${VERSION}.tar.gz"
+          else
+            echo "::error title=No rollback target::Provide either 'version' or 'image_key'."
+            exit 1
+          fi
+
+          # Confirm the object exists before touching the running instance. A
+          # rollback that fails halfway leaves the service worse off than before.
+          if ! aws s3api head-object --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
+            echo "::error title=Archive not found::s3://${BUCKET}/${key} does not exist. Available archives:"
+            aws s3 ls "s3://${BUCKET}/${S3_PATH%/}/" || true
+            exit 1
+          fi
+
+          # Archives land in GLACIER_IR, which reads immediately. Any deeper
+          # class needs an explicit restore first, so surface that clearly.
+          storage_class="$(aws s3api head-object --bucket "$BUCKET" --key "$key" \
+            --query StorageClass --output text 2>/dev/null || echo STANDARD)"
+
+          case "$storage_class" in
+            GLACIER | DEEP_ARCHIVE)
+              echo "::error title=Archive not immediately readable::s3://${BUCKET}/${key} is in ${storage_class} and needs a restore request before it can be downloaded."
+              exit 1
+              ;;
+          esac
+
+          echo "image-key=$key" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Rollback target"
+            echo ""
+            echo "- Object: \`s3://${BUCKET}/${key}\`"
+            echo "- Storage class: \`${storage_class}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  load-docker-image:
+    name: Load Image onto EC2
+    needs: resolve
+    uses: ./.github/workflows/deploy-ec2-load-docker.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      docker_image_name: ${{ inputs.docker_image_name }}
+      s3_path: ${{ inputs.s3_path }}
+      image_key: ${{ needs.resolve.outputs.image_key }}
+      aws_region: ${{ inputs.aws_region }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+
+  start-container:
+    name: Start Container on EC2
+    needs: load-docker-image
+    uses: ./.github/workflows/deploy-ec2-start-container.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      docker_image_name: ${{ inputs.docker_image_name }}
+      port_mapping: ${{ inputs.port_mapping }}
+      app_path: ${{ inputs.app_path }}
+      compose_file: ${{ inputs.compose_file }}
+      aws_region: ${{ inputs.aws_region }}
+      secrets_region: ${{ inputs.secrets_region }}
+      health_check_url: ${{ inputs.health_check_url }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}

@@ -1,173 +1,200 @@
+name: Deploy - EC2 Start Container
+
 on:
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (dev, uat, prod)"
+        description: "Target environment (dev, qa, uat, stg, prod)."
         required: true
         type: string
       docker_image_name:
-        description: "Docker image name (for cleanup)"
+        description: "Docker image name. Also used as the working directory on the instance."
         required: true
         type: string
-      is_ui_app:
-        description: "Whether the app is a UI app"
+      port_mapping:
+        description: "Host-to-container port mapping, e.g. '8080:8080'. Defaults to the PORT_MAPPING environment variable."
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: ""
       app_path:
-        description: "Path to the application directory (relative to repo root). Defaults to root."
+        description: "Path to the application directory, relative to the repository root."
         required: false
         type: string
         default: "."
+      compose_file:
+        description: "Compose file path, relative to app_path."
+        required: false
+        type: string
+        default: "docker-compose.yml"
+      aws_region:
+        description: "Region override. Defaults to the AWS_REGION environment variable on the target environment."
+        required: false
+        type: string
+        default: ""
+      secrets_region:
+        description: "Region holding the Secrets Manager secret. Only needed when secrets live in a different region from the workload."
+        required: false
+        type: string
+        default: ""
+      health_check_url:
+        description: "URL curled on the instance after start-up. Leave empty to skip the check."
+        required: false
+        type: string
+        default: ""
+      health_check_retries:
+        description: "How many times to retry the health check before failing the deployment."
+        required: false
+        type: number
+        default: 10
+      cleanup_tarball:
+        description: "Delete the image tarball from the instance once the container is running."
+        required: false
+        type: boolean
+        default: true
+      timeout_minutes:
+        description: "Job timeout."
+        required: false
+        type: number
+        default: 30
     secrets:
       IAM_ROLE_ARN:
-        description: "AWS IAM Role ARN for OIDC authentication"
+        description: "AWS IAM Role ARN for OIDC authentication."
         required: true
       EC2_INSTANCE_ID:
-        description: "Target EC2 Instance ID"
+        description: "Target EC2 Instance ID."
         required: true
       AWS_SECRETS_ARN:
-        description: "AWS Secrets Manager ARN"
+        description: "Secrets Manager ARN holding the .env contents."
         required: false
+
+permissions:
+  contents: read
 
 jobs:
   start-container:
-    name: Start Docker Container on EC2
+    name: Start Container on EC2
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    env:
-      # release, main (prod), refactor, staging → us-east-1, dev → ap-south-1
-      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || (github.ref_name == 'refactor') && 'us-east-1' || (github.ref_name == 'staging') && 'us-east-1' || 'ap-south-1' }}
-      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      PORT_MAPPING: ${{ vars.PORT_MAPPING }}
-      UI_PORT_MAPPING: ${{ vars.UI_PORT_MAPPING }}
-      CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
-      CLOUDWATCH_LOG_STREAM: ${{ vars.CLOUDWATCH_LOG_STREAM }}
-      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
     permissions:
       id-token: write
       contents: read
+
+    env:
+      REMOTE_DIR: /var/tmp/${{ inputs.docker_image_name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout sgx-github-actions workflow repository
-        uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        id: aws
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
         with:
-          repository: Ennovative-Genix/sgx-github-actions
-          ref: main
-          sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: false
-          path: workflow-repo
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: ec2-start
 
-      - name: Make poll-ssm-command.sh executable
-        run: chmod +x workflow-repo/.github/scripts/poll-ssm-command.sh
+      - name: Encode configuration files
+        id: files
+        env:
+          APP_PATH: ${{ inputs.app_path }}
+          COMPOSE_FILE: ${{ inputs.compose_file }}
+          AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
+          SECRETS_REGION: ${{ inputs.secrets_region != '' && inputs.secrets_region || steps.aws.outputs.region }}
+        run: |
+          set -euo pipefail
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+          compose_path="${APP_PATH%/}/${COMPOSE_FILE}"
+          if [ ! -f "$compose_path" ]; then
+            echo "::error title=Missing compose file::'$compose_path' was not found in the repository."
+            exit 1
+          fi
+
+          # base64 keeps newlines and quoting intact across the SSM boundary.
+          compose_b64="$(base64 -w0 "$compose_path")"
+          echo "::add-mask::$compose_b64"
+          echo "compose=$compose_b64" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$AWS_SECRETS_ARN" ]; then
+            secret="$(aws secretsmanager get-secret-value \
+              --secret-id "$AWS_SECRETS_ARN" \
+              --region "$SECRETS_REGION" \
+              --query SecretString \
+              --output text)"
+
+            env_b64="$(printf '%s' "$secret" | base64 -w0)"
+            echo "::add-mask::$env_b64"
+            echo "env=$env_b64" >> "$GITHUB_OUTPUT"
+            echo "has-env=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-env=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write .env to instance
+        if: steps.files.outputs.has-env == 'true'
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
         with:
-          role-to-assume: ${{ env.IAM_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-EC2-Start-Container-${{ github.run_id }}
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Write .env to instance
+          commands: |
+            mkdir -p ${{ env.REMOTE_DIR }}
+            echo ${{ steps.files.outputs.env }} | base64 -d > ${{ env.REMOTE_DIR }}/.env
+            chmod 600 ${{ env.REMOTE_DIR }}/.env
 
-      - name: Fetch .env from AWS Secrets Manager
-        # Since all the secrets are in the ap-south-1 region, we can use the ap-south-1 region for the AWS Secrets Manager
-        if: ${{ env.AWS_SECRETS_ARN != '' }}
-        run: |
-          aws secretsmanager get-secret-value \
-            --secret-id ${{ env.AWS_SECRETS_ARN }} \
-            --region ap-south-1 \
-            --query 'SecretString' \
-            --output text > .env
-          echo ".env file fetched from AWS Secrets Manager"
+      - name: Write compose file to instance
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        with:
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Write compose file to instance
+          commands: |
+            mkdir -p ${{ env.REMOTE_DIR }}
+            echo ${{ steps.files.outputs.compose }} | base64 -d > ${{ env.REMOTE_DIR }}/docker-compose.yml
 
-      - name: Copy .env to EC2 Instance
-        if: ${{ env.AWS_SECRETS_ARN != '' }}
-        run: |
-          ENV_CONTENT=$(cat .env | base64 | tr -d '\n')
-          COMMAND="echo $ENV_CONTENT | base64 -d > /var/tmp/${{ inputs.docker_image_name }}/.env"
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"$COMMAND\"]}" \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Command.CommandId' \
-            --output text)
+      - name: Stop existing container
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        with:
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Stop existing container
+          # Nothing here is fatal on a first deployment, where there is no
+          # previous container to bring down.
+          continue-on-error: "true"
+          commands: |
+            cd ${{ env.REMOTE_DIR }} && docker compose down || true
+            docker rm -f ${{ inputs.docker_image_name }} || true
 
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy .env to EC2 Instance"
+      - name: Start container
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        with:
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Start container
+          working-directory: ${{ env.REMOTE_DIR }}
+          commands: |
+            PORT_MAPPING=${{ inputs.port_mapping != '' && inputs.port_mapping || vars.PORT_MAPPING }} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ steps.aws.outputs.region }} CLOUDWATCH_LOG_GROUP=${{ vars.CLOUDWATCH_LOG_GROUP }} CLOUDWATCH_LOG_STREAM=${{ vars.CLOUDWATCH_LOG_STREAM }} docker compose up -d
+            docker compose ps
 
-      - name: Copy docker-compose.yml to EC2 Instance
-        run: |
-          COMPOSE_CONTENT=$(cat ${{ inputs.app_path }}/docker-compose.yml | base64 | tr -d '\n')
-          COMMAND="echo $COMPOSE_CONTENT | base64 -d > /var/tmp/${{ inputs.docker_image_name }}/docker-compose.yml"
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"$COMMAND\"]}" \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Command.CommandId' \
-            --output text)
+      - name: Health check
+        if: inputs.health_check_url != ''
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        with:
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Health check
+          commands: |
+            for attempt in $(seq 1 ${{ inputs.health_check_retries }}); do if curl -fsS --max-time 10 "${{ inputs.health_check_url }}" >/dev/null; then echo "healthy after $attempt attempt(s)"; exit 0; fi; echo "attempt $attempt failed, retrying"; sleep 5; done; echo "health check never passed"; docker logs --tail 100 ${{ inputs.docker_image_name }} || true; exit 1
 
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy docker-compose.yml"
-
-      - name: Stop existing Docker container
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["cd /var/tmp/${{ inputs.docker_image_name }}/ && docker compose down || true"]}' \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Stop Docker Container"
-
-      - name: Remove Docker Container with the same name
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["docker rm -f ${{ inputs.docker_image_name }} || true"]}' \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Stop Docker Container with the same name"
-
-      - name: Start Docker container
-        run: |
-          if [ "${{ inputs.is_ui_app }}" == "true" ]; then
-            SELECTED_PORT_MAPPING="${{ env.UI_PORT_MAPPING }}"
-          else
-            SELECTED_PORT_MAPPING="${{ env.PORT_MAPPING }}"
-          fi
-          if [ "${{ vars.CLOUDWATCH_LOG_GROUP }}" != "" ]; then
-            CLOUDWATCH_LOG_GROUP_PARAM="${{ vars.CLOUDWATCH_LOG_GROUP }}"
-            CLOUDWATCH_LOG_STREAM_PARAM="${{ vars.CLOUDWATCH_LOG_STREAM }}"
-          else
-            CLOUDWATCH_LOG_GROUP_PARAM=""
-            CLOUDWATCH_LOG_STREAM_PARAM=""
-          fi
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"cd /var/tmp/${{ inputs.docker_image_name }}/ && PORT_MAPPING=${SELECTED_PORT_MAPPING} IMAGE_NAME=${{ inputs.docker_image_name }} AWS_REGION=${{ env.AWS_REGION }} CLOUDWATCH_LOG_GROUP=${CLOUDWATCH_LOG_GROUP_PARAM} CLOUDWATCH_LOG_STREAM=${CLOUDWATCH_LOG_STREAM_PARAM} docker compose up -d\"]}" \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Start Docker Container"
-
-      - name: Clean up tar file
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --document-name "AWS-RunShellScript" \
-             --parameters '{"commands":["rm -f /var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz || true"]}' \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Clean up files"
+      - name: Remove image tarball
+        if: inputs.cleanup_tarball
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        with:
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Remove image tarball
+          continue-on-error: "true"
+          commands: rm -f ${{ env.REMOTE_DIR }}/${{ inputs.docker_image_name }}-latest.tar.gz

@@ -1,114 +1,120 @@
+name: Deploy - EC2 Load Image
+
+# Pulls the image tarball from S3 onto the instance and loads it into Docker.
+# All instance access goes through SSM, so no inbound SSH is required.
+
 on:
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (dev, uat, stg, prod)"
+        description: "Target environment (dev, qa, uat, stg, prod)."
         required: true
         type: string
       docker_image_name:
-        description: "Docker image name"
+        description: "Docker image name."
         required: true
         type: string
       s3_path:
-        description: "S3 path prefix for downloads"
+        description: "S3 key prefix to download from."
         required: true
         type: string
+      image_key:
+        description: "Exact S3 key to load. Leave empty to use '<s3_path>/latest.tar.gz'. Set this to roll back to a specific build."
+        required: false
+        type: string
+        default: ""
+      aws_region:
+        description: "Region override. Defaults to the AWS_REGION environment variable on the target environment."
+        required: false
+        type: string
+        default: ""
+      prune_images:
+        description: "Prune unused images on the instance before loading, to reclaim disk."
+        required: false
+        type: boolean
+        default: true
+      timeout_minutes:
+        description: "Job timeout."
+        required: false
+        type: number
+        default: 30
     secrets:
       IAM_ROLE_ARN:
-        description: "AWS IAM Role ARN for OIDC authentication"
+        description: "AWS IAM Role ARN for OIDC authentication."
         required: true
       EC2_INSTANCE_ID:
-        description: "Target EC2 Instance ID"
+        description: "Target EC2 Instance ID."
         required: true
+
+permissions:
+  contents: read
 
 jobs:
   load-docker-image:
-    name: Load Docker Image to EC2 from S3
+    name: Load Image onto EC2
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
     permissions:
       id-token: write
       contents: read
 
-    env:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-      # release, main (prod), staging, refactor -> us-east-1, dev → ap-south-1
-      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || (github.ref_name == 'refactor') && 'us-east-1' || (github.ref_name == 'staging') && 'us-east-1' || 'ap-south-1' }}
-      S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Checkout sgx-github-actions workflow repository
-        uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        id: aws
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
         with:
-          repository: Ennovative-Genix/sgx-github-actions
-          ref: main
-          sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: false
-          path: workflow-repo
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: ec2-load
 
-      - name: Make poll-ssm-command.sh executable
-        run: chmod +x workflow-repo/.github/scripts/poll-ssm-command.sh
+      - name: Resolve source object
+        id: source
+        env:
+          BUCKET: ${{ vars.S3_BUILD_BUCKET }}
+          S3_PATH: ${{ inputs.s3_path }}
+          IMAGE_KEY: ${{ inputs.image_key }}
+        run: |
+          set -euo pipefail
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+          if [ -z "$BUCKET" ]; then
+            echo "::error title=Missing bucket::The S3_BUILD_BUCKET variable is not set on environment '${{ inputs.environment }}'."
+            exit 1
+          fi
+
+          key="${IMAGE_KEY:-${S3_PATH%/}/latest.tar.gz}"
+          echo "uri=s3://${BUCKET}/${key}" >> "$GITHUB_OUTPUT"
+          echo "Loading from s3://${BUCKET}/${key}"
+
+      - name: Prune unused images
+        if: inputs.prune_images
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
         with:
-          role-to-assume: ${{ env.IAM_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions-EC2-Load-Docker-${{ github.run_id }}
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Prune unused Docker images
+          # Best effort: a full disk is worth reporting, but a prune that finds
+          # nothing to remove must not fail the deployment.
+          continue-on-error: "true"
+          commands: docker image prune -f
 
-      - name: Prune unused images from Docker (via SSM)
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"docker image prune -f || true\"]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
+      - name: Download image tarball to instance
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        with:
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Download image tarball from S3
+          commands: |
+            mkdir -p /var/tmp/${{ inputs.docker_image_name }}
+            aws s3 cp ${{ steps.source.outputs.uri }} /var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz --region ${{ steps.aws.outputs.region }}
+            ls -lh /var/tmp/${{ inputs.docker_image_name }}/
 
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Prune unused images from Docker"
-
-      - name: Ensure app directory exists on EC2
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["mkdir -p /var/tmp/${{ inputs.docker_image_name }}"]}' \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Command.CommandId' \
-            --output text)
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Ensure app directory exists"
-
-      - name: Copy Docker Image from S3 to EC2 Instance (via SSM)
-        run: |
-          S3_SOURCE="s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/latest.tar.gz"
-          DEST_PATH="/var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz"
-          SSM_COMMAND="aws s3 cp ${S3_SOURCE} ${DEST_PATH} --region ${{ env.AWS_REGION }}"
-
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"${SSM_COMMAND}\"]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Copy Docker Image from S3"
-
-      - name: Load Docker image into Docker on EC2
-        run: |
-          TAR_FILE="/var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz"
-
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "{\"commands\":[\"ls -lh /var/tmp/${{ inputs.docker_image_name }}/\",\"gunzip -c ${TAR_FILE} | docker load\"]}" \
-            --region "${{ env.AWS_REGION }}" \
-            --query 'Command.CommandId' \
-            --output text)
-
-          workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Load Docker Image"
+      - name: Load image into Docker
+        uses: Ennovative-Genix/sgx-github-actions/actions/ssm-exec@main
+        with:
+          instance-id: ${{ secrets.EC2_INSTANCE_ID }}
+          region: ${{ steps.aws.outputs.region }}
+          step-name: Load image into Docker
+          commands: gunzip -c /var/tmp/${{ inputs.docker_image_name }}/${{ inputs.docker_image_name }}-latest.tar.gz | docker load

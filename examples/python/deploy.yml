@@ -1,0 +1,75 @@
+# Python service: test on a version matrix, deploy as a container-image Lambda,
+# publish the shared package to CodeArtifact on a tag.
+# Copy to .github/workflows/deploy.yml in your application repository.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [develop, main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-python.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      python_versions: '["3.11", "3.12"]'
+      extras: dev
+      lint_command: "ruff check . && ruff format --check ."
+      test_command: "pytest -q --cov"
+      aws_region: us-east-1
+      codeartifact_domain: sgx
+      codeartifact_repository: pypi-store
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  deploy:
+    name: Deploy
+    needs: ci
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-lambda.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      function_name: sgx-document-processor-${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      ecr_repository: sgx/document-processor
+      # Must match the function's configured architecture, or every invocation
+      # fails with an exec format error.
+      platforms: linux/arm64
+      # Publishing a version and moving an alias is what makes rollback-lambda.yml
+      # a one-step operation later.
+      alias: live
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  publish:
+    name: Publish package
+    needs: ci
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/publish-pypi.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: prod
+      python_version: "3.12"
+      version_strategy: auto
+      codeartifact_domain: sgx
+      codeartifact_repository: pypi-store
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}

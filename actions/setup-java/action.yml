@@ -1,0 +1,106 @@
+name: "Setup Java"
+description: "Install a JDK with build-tool caching and optionally wire Maven or Gradle to CodeArtifact."
+
+inputs:
+  java-version:
+    description: "JDK version to install."
+    required: false
+    default: "21"
+  distribution:
+    description: "JDK distribution, as accepted by actions/setup-java."
+    required: false
+    default: "temurin"
+  build-tool:
+    description: "maven or gradle. Drives the dependency cache and the CodeArtifact wiring."
+    required: false
+    default: "maven"
+  working-directory:
+    description: "Directory holding pom.xml or build.gradle."
+    required: false
+    default: "."
+  cache:
+    description: "Cache the build tool's dependency store between runs."
+    required: false
+    default: "true"
+  codeartifact-domain:
+    description: "CodeArtifact domain. Leave empty to use Maven Central."
+    required: false
+    default: ""
+  codeartifact-repository:
+    description: "CodeArtifact repository."
+    required: false
+    default: ""
+  codeartifact-domain-owner:
+    description: "AWS account id owning the CodeArtifact domain."
+    required: false
+    default: ""
+  codeartifact-region:
+    description: "Region of the CodeArtifact domain."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup JDK
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: ${{ inputs.distribution }}
+        cache: ${{ inputs.cache == 'true' && inputs.build-tool || '' }}
+
+    - name: Authenticate build tool against CodeArtifact
+      if: inputs.codeartifact-domain != ''
+      uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@main
+      with:
+        tool: ${{ inputs.build-tool }}
+        domain: ${{ inputs.codeartifact-domain }}
+        repository: ${{ inputs.codeartifact-repository }}
+        domain-owner: ${{ inputs.codeartifact-domain-owner }}
+        region: ${{ inputs.codeartifact-region }}
+
+    # settings.xml is generated rather than committed so the token never lands
+    # on disk in the consuming repository.
+    - name: Write Maven settings for CodeArtifact
+      if: inputs.codeartifact-domain != '' && inputs.build-tool == 'maven'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.m2
+
+        cat > ~/.m2/settings.xml <<'XML'
+        <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+          <servers>
+            <server>
+              <id>codeartifact</id>
+              <username>aws</username>
+              <password>${env.CODEARTIFACT_AUTH_TOKEN}</password>
+            </server>
+          </servers>
+          <profiles>
+            <profile>
+              <id>codeartifact</id>
+              <repositories>
+                <repository>
+                  <id>codeartifact</id>
+                  <url>${env.CODEARTIFACT_URL}</url>
+                </repository>
+              </repositories>
+            </profile>
+          </profiles>
+          <activeProfiles>
+            <activeProfile>codeartifact</activeProfile>
+          </activeProfiles>
+        </settings>
+        XML
+
+        echo "Wrote ~/.m2/settings.xml bound to the 'codeartifact' server id."
+
+    - name: Make Gradle wrapper executable
+      if: inputs.build-tool == 'gradle'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # Wrappers committed from Windows frequently lose the executable bit.
+        [ -f ./gradlew ] && chmod +x ./gradlew || true

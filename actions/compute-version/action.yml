@@ -1,0 +1,128 @@
+name: "Compute Version"
+description: "Derive a single version string and the image tags that go with it, so every artifact from one run carries the same identity."
+
+inputs:
+  strategy:
+    description: "auto, tag, manifest or run-number. 'auto' uses the git tag when the run was triggered by one, otherwise the manifest version plus run metadata."
+    required: false
+    default: "auto"
+  working-directory:
+    description: "Directory holding package.json, pom.xml or pyproject.toml."
+    required: false
+    default: "."
+  environment:
+    description: "Target environment. Folded into prerelease versions so dev and prod builds never collide."
+    required: false
+    default: ""
+  version-override:
+    description: "Use this exact version and skip all detection."
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: "Full version string, e.g. 1.4.2 or 1.4.2-dev.87."
+    value: ${{ steps.compute.outputs.version }}
+  base-version:
+    description: "The version without prerelease or build metadata, e.g. 1.4.2."
+    value: ${{ steps.compute.outputs.base-version }}
+  is-prerelease:
+    description: "'true' when the computed version carries a prerelease suffix."
+    value: ${{ steps.compute.outputs.is-prerelease }}
+  short-sha:
+    description: "Seven character commit SHA."
+    value: ${{ steps.compute.outputs.short-sha }}
+  image-tags:
+    description: "Newline separated image tags: the version, the short SHA, and 'latest' for non-prereleases."
+    value: ${{ steps.compute.outputs.image-tags }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute version
+      id: compute
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERSION_STRATEGY: ${{ inputs.strategy }}
+        TARGET_ENV: ${{ inputs.environment }}
+        VERSION_OVERRIDE: ${{ inputs.version-override }}
+      run: |
+        set -euo pipefail
+
+        short_sha="${GITHUB_SHA:0:7}"
+
+        read_manifest_version() {
+          if [ -f package.json ]; then
+            node -e "process.stdout.write(require('./package.json').version || '')" 2>/dev/null || true
+          elif [ -f pyproject.toml ]; then
+            sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' pyproject.toml | head -n1
+          elif [ -f pom.xml ]; then
+            # First <version> under <project> is the project version; the ones
+            # that follow belong to dependencies.
+            sed -n 's:.*<version>\(.*\)</version>.*:\1:p' pom.xml | head -n1 | sed 's/-SNAPSHOT//'
+          fi
+        }
+
+        base_version=""
+        version=""
+
+        if [ -n "$VERSION_OVERRIDE" ]; then
+          version="$VERSION_OVERRIDE"
+          base_version="${version%%-*}"
+
+        elif [ "$VERSION_STRATEGY" = "run-number" ]; then
+          base_version="0.0.${GITHUB_RUN_NUMBER}"
+          version="$base_version"
+
+        elif { [ "$VERSION_STRATEGY" = "tag" ] || [ "$VERSION_STRATEGY" = "auto" ]; } && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+          version="${GITHUB_REF_NAME#v}"
+          base_version="${version%%-*}"
+
+        else
+          base_version="$(read_manifest_version)"
+          if [ -z "$base_version" ]; then
+            echo "::warning title=No manifest version::Could not read a version from package.json, pyproject.toml or pom.xml; defaulting to 0.0.0."
+            base_version="0.0.0"
+          fi
+
+          if [ "$VERSION_STRATEGY" = "manifest" ]; then
+            version="$base_version"
+          elif [ -n "$TARGET_ENV" ]; then
+            version="${base_version}-${TARGET_ENV}.${GITHUB_RUN_NUMBER}"
+          else
+            version="${base_version}-${GITHUB_RUN_NUMBER}"
+          fi
+        fi
+
+        case "$version" in
+          *-*) is_prerelease="true" ;;
+          *)   is_prerelease="false" ;;
+        esac
+
+        # Docker tags cannot contain '+', and only the stable line earns 'latest'.
+        image_tags="${version//+/_}"$'\n'"sha-${short_sha}"
+        if [ "$is_prerelease" = "false" ]; then
+          image_tags="${image_tags}"$'\n'"latest"
+        fi
+
+        {
+          echo "version=$version"
+          echo "base-version=$base_version"
+          echo "is-prerelease=$is_prerelease"
+          echo "short-sha=$short_sha"
+          echo "image-tags<<__TAGS__"
+          echo "$image_tags"
+          echo "__TAGS__"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Version"
+          echo ""
+          echo "| Field | Value |"
+          echo "| --- | --- |"
+          echo "| Version | \`$version\` |"
+          echo "| Base | \`$base_version\` |"
+          echo "| Prerelease | \`$is_prerelease\` |"
+          echo "| Commit | \`$short_sha\` |"
+        } >> "$GITHUB_STEP_SUMMARY"

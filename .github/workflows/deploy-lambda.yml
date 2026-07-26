@@ -1,0 +1,208 @@
+name: Deploy - Lambda
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, qa, uat, stg, prod)."
+        required: true
+        type: string
+      function_name:
+        description: "Lambda function name or ARN."
+        required: true
+        type: string
+      package_type:
+        description: "zip or image."
+        required: false
+        type: string
+        default: "zip"
+      image_uri:
+        description: "ECR image reference. Required when package_type is 'image'."
+        required: false
+        type: string
+        default: ""
+      artifact_name:
+        description: "Workflow artifact holding the deployment package. Used when package_type is 'zip'."
+        required: false
+        type: string
+        default: ""
+      zip_path:
+        description: "Path to the zip inside the repository or downloaded artifact."
+        required: false
+        type: string
+        default: "function.zip"
+      s3_bucket:
+        description: "Stage the package through S3 instead of uploading it inline. Required for packages over 50 MB."
+        required: false
+        type: string
+        default: ""
+      s3_key:
+        description: "S3 key for the staged package. Defaults to '<function_name>/<sha>.zip'."
+        required: false
+        type: string
+        default: ""
+      publish:
+        description: "Publish an immutable version after updating the code."
+        required: false
+        type: boolean
+        default: true
+      alias:
+        description: "Alias to point at the newly published version, e.g. 'live'. Leave empty to skip."
+        required: false
+        type: string
+        default: ""
+      aws_region:
+        description: "Region override. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+      timeout_minutes:
+        description: "Job timeout."
+        required: false
+        type: number
+        default: 20
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication."
+        required: true
+    outputs:
+      function_version:
+        description: "The published Lambda version. Pass this to the rollback workflow."
+        value: ${{ jobs.deploy.outputs.function_version }}
+      previous_version:
+        description: "The version the alias pointed at before this run."
+        value: ${{ jobs.deploy.outputs.previous_version }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Lambda
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      function_version: ${{ steps.update.outputs.version }}
+      previous_version: ${{ steps.previous.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        if: inputs.artifact_name != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+
+      - name: Configure AWS credentials
+        id: aws
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        with:
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: deploy-lambda
+
+      - name: Record current alias target
+        id: previous
+        if: inputs.alias != ''
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          ALIAS: ${{ inputs.alias }}
+        run: |
+          set -euo pipefail
+
+          # Captured before anything changes so a rollback has a target even if
+          # the deployment fails halfway through.
+          version="$(aws lambda get-alias \
+            --function-name "$FUNCTION_NAME" \
+            --name "$ALIAS" \
+            --query FunctionVersion \
+            --output text 2>/dev/null || echo "")"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Alias '$ALIAS' currently points at version '${version:-none}'."
+
+      - name: Update function code
+        id: update
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          PACKAGE_TYPE: ${{ inputs.package_type }}
+          IMAGE_URI: ${{ inputs.image_uri }}
+          ZIP_PATH: ${{ inputs.zip_path }}
+          S3_BUCKET: ${{ inputs.s3_bucket }}
+          S3_KEY: ${{ inputs.s3_key }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+
+          args=(--function-name "$FUNCTION_NAME")
+          [ "$PUBLISH" = "true" ] && args+=(--publish)
+
+          if [ "$PACKAGE_TYPE" = "image" ]; then
+            [ -n "$IMAGE_URI" ] || { echo "::error::package_type 'image' requires image_uri."; exit 1; }
+            args+=(--image-uri "$IMAGE_URI")
+
+          elif [ -n "$S3_BUCKET" ]; then
+            key="${S3_KEY:-${FUNCTION_NAME}/${GITHUB_SHA}.zip}"
+            aws s3 cp "$ZIP_PATH" "s3://${S3_BUCKET}/${key}"
+            args+=(--s3-bucket "$S3_BUCKET" --s3-key "$key")
+
+          else
+            [ -f "$ZIP_PATH" ] || { echo "::error::Deployment package '$ZIP_PATH' was not found."; exit 1; }
+            # The inline upload path caps out at 50 MB; stage through S3 above that.
+            args+=(--zip-file "fileb://${ZIP_PATH}")
+          fi
+
+          version="$(aws lambda update-function-code "${args[@]}" --query Version --output text)"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Published version $version."
+
+          # The function stays in Pending until the new code is fully deployed;
+          # updating the alias before that races the service.
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+
+      - name: Point alias at the new version
+        if: inputs.alias != '' && inputs.publish
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          ALIAS: ${{ inputs.alias }}
+          VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if aws lambda get-alias --function-name "$FUNCTION_NAME" --name "$ALIAS" >/dev/null 2>&1; then
+            aws lambda update-alias \
+              --function-name "$FUNCTION_NAME" \
+              --name "$ALIAS" \
+              --function-version "$VERSION" >/dev/null
+          else
+            aws lambda create-alias \
+              --function-name "$FUNCTION_NAME" \
+              --name "$ALIAS" \
+              --function-version "$VERSION" >/dev/null
+          fi
+
+          echo "Alias '$ALIAS' now points at version $VERSION."
+
+      - name: Summarise
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          VERSION: ${{ steps.update.outputs.version }}
+          PREVIOUS: ${{ steps.previous.outputs.version }}
+        run: |
+          {
+            echo "### Lambda deployment"
+            echo ""
+            echo "- Function: \`${FUNCTION_NAME}\`"
+            echo "- New version: \`${VERSION}\`"
+            echo "- Previous alias target: \`${PREVIOUS:-n/a}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

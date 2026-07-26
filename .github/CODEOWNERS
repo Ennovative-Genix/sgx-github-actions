@@ -1,0 +1,11 @@
+# Changes here propagate to every application repository in the organisation, so
+# everything in this repository requires platform review.
+
+*                       @Ennovative-Genix/platform-engineering
+
+# The deployment and rollback paths touch production directly.
+/.github/workflows/deploy-*.yml    @Ennovative-Genix/platform-engineering
+/.github/workflows/pipeline-*.yml  @Ennovative-Genix/platform-engineering
+/.github/workflows/rollback-*.yml  @Ennovative-Genix/platform-engineering
+/.github/workflows/release.yml     @Ennovative-Genix/platform-engineering
+/scripts/                          @Ennovative-Genix/platform-engineering

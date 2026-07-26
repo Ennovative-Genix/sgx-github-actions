@@ -1,0 +1,127 @@
+name: Rollback - Lambda
+
+# Repointing an alias is the fastest rollback AWS offers: the old version is
+# already deployed and warm, so there is nothing to rebuild or upload.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, qa, uat, stg, prod)."
+        required: true
+        type: string
+      function_name:
+        description: "Lambda function name or ARN."
+        required: true
+        type: string
+      alias:
+        description: "Alias to repoint."
+        required: true
+        type: string
+      target_version:
+        description: "Version to roll back to. Leave empty to select the highest version below the current one."
+        required: false
+        type: string
+        default: ""
+      aws_region:
+        description: "Region override. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication."
+        required: true
+    outputs:
+      restored_version:
+        description: "The version the alias now points at."
+        value: ${{ jobs.rollback.outputs.restored_version }}
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Roll back Lambda alias
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 15
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      restored_version: ${{ steps.rollback.outputs.version }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@main
+        with:
+          role-arn: ${{ secrets.IAM_ROLE_ARN }}
+          region: ${{ inputs.aws_region }}
+          fallback-region: ${{ vars.AWS_REGION }}
+          session-name: rollback-lambda
+
+      - name: Repoint alias
+        id: rollback
+        env:
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          ALIAS: ${{ inputs.alias }}
+          TARGET_VERSION: ${{ inputs.target_version }}
+        run: |
+          set -euo pipefail
+
+          current="$(aws lambda get-alias \
+            --function-name "$FUNCTION_NAME" \
+            --name "$ALIAS" \
+            --query FunctionVersion \
+            --output text)"
+
+          echo "Alias '$ALIAS' currently points at version $current."
+
+          if [ -n "$TARGET_VERSION" ]; then
+            target="$TARGET_VERSION"
+          else
+            # Versions are numeric strings; sort numerically and take the
+            # highest one strictly below the current version.
+            target="$(aws lambda list-versions-by-function \
+              --function-name "$FUNCTION_NAME" \
+              --query 'Versions[?Version!=`$LATEST`].Version' \
+              --output text \
+              | tr '\t' '\n' \
+              | sort -n \
+              | awk -v cur="$current" '$1 + 0 < cur + 0' \
+              | tail -n1)"
+
+            if [ -z "$target" ]; then
+              echo "::error title=No earlier version::Version $current is the oldest published version; there is nothing to roll back to."
+              exit 1
+            fi
+          fi
+
+          if [ "$target" = "$current" ]; then
+            echo "::warning title=No change::The alias already points at version $target."
+          fi
+
+          # Fail before mutating if the requested version was never published.
+          if ! aws lambda get-function --function-name "$FUNCTION_NAME" --qualifier "$target" >/dev/null 2>&1; then
+            echo "::error title=Unknown version::Version $target does not exist for $FUNCTION_NAME."
+            exit 1
+          fi
+
+          aws lambda update-alias \
+            --function-name "$FUNCTION_NAME" \
+            --name "$ALIAS" \
+            --function-version "$target" >/dev/null
+
+          echo "version=$target" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Lambda rollback complete"
+            echo ""
+            echo "- Function: \`${FUNCTION_NAME}\`"
+            echo "- Alias: \`${ALIAS}\`"
+            echo "- Was: \`${current}\`"
+            echo "- Now: \`${target}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

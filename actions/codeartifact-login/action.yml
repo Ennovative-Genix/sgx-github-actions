@@ -1,0 +1,142 @@
+name: "CodeArtifact Login"
+description: "Authenticate a package manager against an AWS CodeArtifact repository. Requires AWS credentials to already be configured."
+
+inputs:
+  tool:
+    description: "Package manager to configure: npm, pip, twine, maven or gradle."
+    required: true
+  domain:
+    description: "CodeArtifact domain."
+    required: true
+  repository:
+    description: "CodeArtifact repository inside the domain."
+    required: true
+  domain-owner:
+    description: "AWS account id that owns the domain. Defaults to the calling account."
+    required: false
+    default: ""
+  region:
+    description: "Region the domain lives in. Defaults to the configured region."
+    required: false
+    default: ""
+  namespace:
+    description: "npm scope to bind the registry to, without the leading @. Leave empty to set the default registry."
+    required: false
+    default: ""
+  duration-seconds:
+    description: "Lifetime of the authorization token."
+    required: false
+    default: "3600"
+
+outputs:
+  token:
+    description: "CodeArtifact authorization token. Registered as a masked secret."
+    value: ${{ steps.token.outputs.token }}
+  endpoint:
+    description: "Repository endpoint URL for the requested tool."
+    value: ${{ steps.token.outputs.endpoint }}
+
+runs:
+  using: composite
+  steps:
+    - name: Request CodeArtifact token
+      id: token
+      shell: bash
+      env:
+        CA_TOOL: ${{ inputs.tool }}
+        CA_DOMAIN: ${{ inputs.domain }}
+        CA_REPOSITORY: ${{ inputs.repository }}
+        CA_DOMAIN_OWNER: ${{ inputs.domain-owner }}
+        CA_REGION: ${{ inputs.region }}
+        CA_DURATION: ${{ inputs.duration-seconds }}
+      run: |
+        set -euo pipefail
+
+        args=(--domain "$CA_DOMAIN")
+        [ -n "$CA_DOMAIN_OWNER" ] && args+=(--domain-owner "$CA_DOMAIN_OWNER")
+        [ -n "$CA_REGION" ] && args+=(--region "$CA_REGION")
+
+        token="$(aws codeartifact get-authorization-token \
+          "${args[@]}" \
+          --duration-seconds "$CA_DURATION" \
+          --query authorizationToken \
+          --output text)"
+
+        # Mask before the value can reach any later log line.
+        echo "::add-mask::$token"
+        echo "token=$token" >> "$GITHUB_OUTPUT"
+
+        # `format` differs per ecosystem; the endpoint shape does not.
+        case "$CA_TOOL" in
+          npm)            format=npm ;;
+          pip | twine)    format=pypi ;;
+          maven | gradle) format=maven ;;
+          *)
+            echo "::error title=Unsupported tool::'$CA_TOOL' is not one of npm, pip, twine, maven, gradle."
+            exit 1
+            ;;
+        esac
+
+        endpoint="$(aws codeartifact get-repository-endpoint \
+          "${args[@]}" \
+          --repository "$CA_REPOSITORY" \
+          --format "$format" \
+          --query repositoryEndpoint \
+          --output text)"
+
+        echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
+        echo "Resolved $CA_TOOL endpoint: $endpoint"
+
+    - name: Configure package manager
+      shell: bash
+      env:
+        CA_TOOL: ${{ inputs.tool }}
+        CA_NAMESPACE: ${{ inputs.namespace }}
+        CA_TOKEN: ${{ steps.token.outputs.token }}
+        CA_ENDPOINT: ${{ steps.token.outputs.endpoint }}
+        CA_DOMAIN: ${{ inputs.domain }}
+        CA_REPOSITORY: ${{ inputs.repository }}
+      run: |
+        set -euo pipefail
+
+        # Strip the protocol; npm and pip want different shapes of the same URL.
+        host_path="${CA_ENDPOINT#https://}"
+
+        case "$CA_TOOL" in
+          npm)
+            if [ -n "$CA_NAMESPACE" ]; then
+              npm config set "@${CA_NAMESPACE}:registry" "$CA_ENDPOINT"
+            else
+              npm config set registry "$CA_ENDPOINT"
+            fi
+            npm config set "//${host_path}:_authToken" "$CA_TOKEN"
+            npm config set "//${host_path}:always-auth" true
+            echo "npm configured against CodeArtifact."
+            ;;
+
+          pip)
+            pip config set global.index-url "https://aws:${CA_TOKEN}@${host_path}simple/"
+            echo "pip configured against CodeArtifact."
+            ;;
+
+          twine)
+            {
+              echo "TWINE_USERNAME=aws"
+              echo "TWINE_PASSWORD=${CA_TOKEN}"
+              echo "TWINE_REPOSITORY_URL=${CA_ENDPOINT}"
+            } >> "$GITHUB_ENV"
+            echo "twine configured against CodeArtifact."
+            ;;
+
+          maven | gradle)
+            # Both read the token from the environment; the settings.xml or
+            # build.gradle in the consuming repository references it by name.
+            {
+              echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
+              echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
+              echo "CODEARTIFACT_DOMAIN=${CA_DOMAIN}"
+              echo "CODEARTIFACT_REPOSITORY=${CA_REPOSITORY}"
+            } >> "$GITHUB_ENV"
+            echo "$CA_TOOL environment configured against CodeArtifact."
+            ;;
+        esac

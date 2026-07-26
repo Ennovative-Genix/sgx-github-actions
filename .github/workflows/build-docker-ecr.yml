@@ -1,8 +1,7 @@
-name: Build - Docker to S3
+name: Build - Docker to ECR
 
-# Builds a container image and ships it to S3 as a tarball. Used by the EC2
-# deployment path, where instances pull from S3 over SSM rather than from a
-# registry.
+# The registry-based build path. Preferred over the S3 tarball path for anything
+# that pulls images natively: EKS, Lambda container functions, ECS.
 
 on:
   workflow_call:
@@ -11,12 +10,8 @@ on:
         description: "Target environment (dev, qa, uat, stg, prod)."
         required: true
         type: string
-      docker_image_name:
-        description: "Docker image name."
-        required: true
-        type: string
-      s3_path:
-        description: "S3 key prefix for uploads."
+      ecr_repository:
+        description: "ECR repository name."
         required: true
         type: string
       app_path:
@@ -39,8 +34,13 @@ on:
         required: false
         type: string
         default: ""
+      platforms:
+        description: "Target platforms. Use linux/arm64 for Graviton nodes."
+        required: false
+        type: string
+        default: "linux/amd64"
       version:
-        description: "Version label for the archived image. Leave empty to derive one."
+        description: "Version to tag the image with. Leave empty to derive one."
         required: false
         type: string
         default: ""
@@ -49,16 +49,21 @@ on:
         required: false
         type: string
         default: "auto"
+      create_repository:
+        description: "Create the ECR repository when it does not exist."
+        required: false
+        type: boolean
+        default: false
       aws_region:
-        description: "Region override. Defaults to the AWS_REGION environment variable on the target environment."
+        description: "Region override. Falls back to the AWS_REGION environment variable."
         required: false
         type: string
         default: ""
       cleanup_runner:
-        description: "Free disk space on the runner before building. Needed for large images."
+        description: "Free disk space on the runner before building."
         required: false
         type: boolean
-        default: true
+        default: false
       timeout_minutes:
         description: "Job timeout."
         required: false
@@ -69,22 +74,25 @@ on:
         description: "AWS IAM Role ARN for OIDC authentication."
         required: true
     outputs:
+      image_uri:
+        description: "Fully qualified image reference, tagged with the computed version."
+        value: ${{ jobs.build-and-push.outputs.image_uri }}
+      image_digest:
+        description: "Image digest. Deploy by digest for a guaranteed-immutable reference."
+        value: ${{ jobs.build-and-push.outputs.image_digest }}
       version:
-        description: "Version label applied to the archived image."
-        value: ${{ jobs.build-docker-upload.outputs.version }}
-      version_key:
-        description: "S3 key of the immutable copy. Pass this to a rollback workflow."
-        value: ${{ jobs.build-docker-upload.outputs.version_key }}
+        description: "Version applied to the image."
+        value: ${{ jobs.build-and-push.outputs.version }}
       region:
-        description: "AWS region the image was uploaded to."
-        value: ${{ jobs.build-docker-upload.outputs.region }}
+        description: "AWS region the image was pushed to."
+        value: ${{ jobs.build-and-push.outputs.region }}
 
 permissions:
   contents: read
 
 jobs:
-  build-docker-upload:
-    name: Build Image and Upload to S3
+  build-and-push:
+    name: Build Image and Push to ECR
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
@@ -94,16 +102,15 @@ jobs:
       contents: read
 
     outputs:
+      image_uri: ${{ steps.build.outputs.image-ref }}
+      image_digest: ${{ steps.build.outputs.digest }}
       version: ${{ steps.version.outputs.version }}
-      version_key: ${{ steps.upload.outputs.version-key }}
       region: ${{ steps.aws.outputs.region }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Runs as a step, not a separate job: each job gets its own runner, so
-      # freeing disk anywhere else does nothing for this build.
       - name: Free up runner disk space
         if: inputs.cleanup_runner
         uses: Ennovative-Genix/sgx-github-actions/actions/runner-disk-cleanup@main
@@ -115,7 +122,7 @@ jobs:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
           fallback-region: ${{ vars.AWS_REGION }}
-          session-name: build-s3
+          session-name: build-ecr
 
       - name: Compute version
         id: version
@@ -126,29 +133,39 @@ jobs:
           environment: ${{ inputs.environment }}
           version-override: ${{ inputs.version }}
 
-      - name: Build image
+      - name: Log in to ECR
+        id: ecr
+        uses: Ennovative-Genix/sgx-github-actions/actions/ecr-login@main
+        with:
+          repository: ${{ inputs.ecr_repository }}
+          create-repository: ${{ inputs.create_repository }}
+
+      - name: Build and push image
         id: build
         uses: Ennovative-Genix/sgx-github-actions/actions/docker-build@main
         with:
-          image-name: ${{ inputs.docker_image_name }}
-          tags: latest
+          image-name: ${{ inputs.ecr_repository }}
+          registry: ${{ steps.ecr.outputs.registry }}
+          tags: ${{ steps.version.outputs.image-tags }}
           context: ${{ inputs.app_path }}
           dockerfile: ${{ inputs.dockerfile }}
           target: ${{ inputs.target }}
+          platforms: ${{ inputs.platforms }}
           build-args: |
             ENV=${{ inputs.environment }}
             APP_VERSION=${{ steps.version.outputs.version }}
             ${{ inputs.build_args }}
-          # The image has to exist in the local daemon before `docker save`.
-          load: "true"
-          push: "false"
+          push: "true"
+          load: "false"
 
-      - name: Upload image to S3
-        id: upload
-        uses: Ennovative-Genix/sgx-github-actions/actions/s3-image-upload@main
-        with:
-          image-ref: ${{ steps.build.outputs.image-ref }}
-          bucket: ${{ vars.S3_BUILD_BUCKET }}
-          s3-path: ${{ inputs.s3_path }}
-          region: ${{ steps.aws.outputs.region }}
-          version: ${{ steps.version.outputs.version }}
+      - name: Summarise
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image-ref }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Image pushed to ECR"
+            echo ""
+            echo "- Reference: \`${IMAGE_URI}\`"
+            echo "- Digest: \`${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

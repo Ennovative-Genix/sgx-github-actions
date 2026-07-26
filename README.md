@@ -1,197 +1,196 @@
 # sgx-github-actions
 
-Centralized repository for reusable GitHub Actions workflows used across various projects.
-
-## Available Workflows
-
-### Deploy Workflow (`deploy-init.yml`)
-
-Complete deployment pipeline that builds, uploads to S3, and deploys to EC2.
-
-**Usage:**
+Centralised CI/CD for the organisation. Application repositories describe *what*
+they want deployed; this repository owns *how* it happens.
 
 ```yaml
-name: Deploy
-
-on:
-  push:
-    branches: [main]
-
 jobs:
   deploy:
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy-init.yml@main
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-ec2.yml@v1
+    permissions:
+      id-token: write
+      contents: read
     with:
-      environment: dev # dev, uat, or prod
-      docker_image_name: my-app
-      s3_path: my-app/builds
-      app_path: packages/backend # Optional - path to app if not in repo root
-      is_ui_app: false # Optional - set true for UI apps (uses UI_PORT_MAPPING)
+      environment: prod
+      docker_image_name: billing-api
+      s3_path: billing-api/builds
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
-      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }} # Optional
+      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
 ```
 
-**Inputs:**
-
-| Name                | Required | Default | Description                                              |
-| ------------------- | -------- | ------- | -------------------------------------------------------- |
-| `environment`       | Yes      | -       | Target environment (`dev`, `uat`, `prod`)                |
-| `docker_image_name` | Yes      | -       | Docker image name                                        |
-| `s3_path`           | Yes      | -       | S3 path prefix for uploads/downloads                     |
-| `app_path`          | No       | `.`     | Path to application directory (relative to repo root)   |
-| `is_ui_app`         | No       | `false` | Set `true` for UI apps (uses `UI_PORT_MAPPING` variable) |
-
-**Secrets:**
-
-| Name              | Required | Description                              |
-| ----------------- | -------- | ---------------------------------------- |
-| `IAM_ROLE_ARN`    | Yes      | AWS IAM Role ARN for OIDC authentication |
-| `EC2_INSTANCE_ID` | Yes      | Target EC2 Instance ID                   |
-| `AWS_SECRETS_ARN` | No       | AWS Secrets Manager ARN for .env file    |
-
-**Pipeline Steps:**
-
-1. **Pre-Build Cleanup** - Frees up disk space on runner
-2. **Build and Upload** - Builds project, creates Docker image, uploads to S3
-3. **Load Docker to EC2** - Copies Docker image from S3 to EC2 and loads it
-4. **Start Container** - Optionally fetches .env from Secrets Manager, copies docker-compose.yml, and starts container
+Start with [docs/onboarding.md](docs/onboarding.md), then copy the closest file
+from [examples/](examples/).
 
 ---
 
-### Test Workflow (`test-init.yml`)
+## Structure
 
-Run tests for your project with framework-specific configurations.
+Three layers. Pipelines chain stages; stages own an environment and a runner;
+composite actions do one task inside somebody else's job.
 
-**Usage:**
+```
+Pipelines   pipeline-ec2 · pipeline-eks · pipeline-lambda · pipeline-static
+Stages      ci-* · build-* · publish-* · deploy-* · rollback-*
+Actions     actions/aws-oidc-auth · actions/ssm-exec · actions/docker-build · …
+```
+
+Full reasoning in [docs/architecture.md](docs/architecture.md).
+
+---
+
+## Pipelines
+
+Call one of these and you get an end-to-end deployment.
+
+| Workflow | Does |
+| --- | --- |
+| [`pipeline-ec2.yml`](.github/workflows/pipeline-ec2.yml) | Build → S3 → load onto EC2 over SSM → start with Compose |
+| [`pipeline-eks.yml`](.github/workflows/pipeline-eks.yml) | Build → ECR → roll out to EKS via kubectl, kustomize or Helm |
+| [`pipeline-lambda.yml`](.github/workflows/pipeline-lambda.yml) | Build → ECR → update the function → move the alias |
+| [`pipeline-static.yml`](.github/workflows/pipeline-static.yml) | Build → S3 sync → CloudFront invalidation |
+
+## Stages
+
+Compose these yourself when a pipeline does not fit.
+
+**Build and test**
+
+| Workflow | Covers |
+| --- | --- |
+| [`ci-node.yml`](.github/workflows/ci-node.yml) | Node.js, NestJS, Angular, React, Nx. Version matrix, `nx affected`, artifact upload |
+| [`ci-java.yml`](.github/workflows/ci-java.yml) | Maven and Gradle. JDK matrix, test reports |
+| [`ci-python.yml`](.github/workflows/ci-python.yml) | Version matrix, ruff and pytest by default, optional sdist/wheel |
+
+**Package**
+
+| Workflow | Produces |
+| --- | --- |
+| [`build-docker-ecr.yml`](.github/workflows/build-docker-ecr.yml) | Image in ECR, tagged by version, SHA and `latest` |
+| [`build-docker-s3.yml`](.github/workflows/build-docker-s3.yml) | Image tarball in S3, both moving and immutable copies |
+
+**Publish**
+
+| Workflow | Target |
+| --- | --- |
+| [`publish-npm.yml`](.github/workflows/publish-npm.yml) | CodeArtifact npm |
+| [`publish-pypi.yml`](.github/workflows/publish-pypi.yml) | CodeArtifact PyPI |
+| [`publish-maven.yml`](.github/workflows/publish-maven.yml) | CodeArtifact Maven |
+
+**Deploy**
+
+| Workflow | Target |
+| --- | --- |
+| [`deploy-ec2-load-docker.yml`](.github/workflows/deploy-ec2-load-docker.yml) | Pull the tarball from S3 onto the instance and load it |
+| [`deploy-ec2-start-container.yml`](.github/workflows/deploy-ec2-start-container.yml) | Write config, restart the container, optional health check |
+| [`deploy-eks.yml`](.github/workflows/deploy-eks.yml) | EKS, with rollout wait and failure diagnostics |
+| [`deploy-lambda.yml`](.github/workflows/deploy-lambda.yml) | Lambda, zip or container image, with alias management |
+| [`deploy-s3-cloudfront.yml`](.github/workflows/deploy-s3-cloudfront.yml) | Static site, with correct cache headers per file type |
+
+**Roll back**
+
+| Workflow | Mechanism |
+| --- | --- |
+| [`rollback-ec2.yml`](.github/workflows/rollback-ec2.yml) | Restore an archived image by version |
+| [`rollback-eks.yml`](.github/workflows/rollback-eks.yml) | `rollout undo`, or pin an explicit image |
+| [`rollback-lambda.yml`](.github/workflows/rollback-lambda.yml) | Repoint the alias at an earlier version |
+
+## Composite actions
+
+Usable directly from any job:
 
 ```yaml
-name: Test
-
-on:
-  pull_request:
-    branches: [main]
-
-jobs:
-  test:
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/test-init.yml@main
-    with:
-      framework: angular
-      node_version: "20.x"
-      run_tests: true
-      app_path: packages/frontend # Optional - path to app if not in repo root
+- uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v1
+  with:
+    role-arn: ${{ secrets.IAM_ROLE_ARN }}
+    fallback-region: ${{ vars.AWS_REGION }}
 ```
 
-**Inputs:**
-
-| Name           | Required | Default   | Description                                            |
-| -------------- | -------- | --------- | ------------------------------------------------------ |
-| `framework`    | No       | `angular` | Framework under test                                   |
-| `node_version` | No       | `20.x`    | Node.js version to use                                 |
-| `run_tests`    | No       | `true`    | Whether to run test cases                              |
-| `app_path`     | No       | `.`       | Path to application directory (relative to repo root) |
-
----
-
-### Individual Workflows
-
-These workflows are used internally by the main workflows but can also be called directly:
-
-#### `build-docker-s3.yml`
-
-Builds the project, creates a Docker image, and uploads to S3.
-
-- Supports environment-specific builds (`npm run build:dev`, `build:uat`, `build:prod`)
-- Falls back to `npm run build` if environment-specific script doesn't exist
-- Uploads to S3 with both `latest.tar.gz` and `{sha}.tar.gz` versions
-
-#### `deploy-ec2-load-docker.yml`
-
-Copies Docker image from S3 to EC2 and loads it into Docker.
-
-#### `deploy-ec2-start-container.yml`
-
-Starts the Docker container on EC2:
-
-- Optionally fetches `.env` from AWS Secrets Manager
-- Copies `docker-compose.yml` to EC2
-- Stops existing container and starts new one
-- Cleans up temporary files
-
-#### `prebuild-cleanup.yml`
-
-Frees up disk space on GitHub runners by removing unnecessary packages.
-
-#### `test-angular.yml`
-
-Runs Angular-specific tests.
+| Action | Does |
+| --- | --- |
+| [`actions/aws-oidc-auth`](actions/aws-oidc-auth) | Resolve the region and assume a role via OIDC. No stored keys |
+| [`actions/ssm-exec`](actions/ssm-exec) | Run commands on an instance over SSM and wait, with `jq`-built payloads |
+| [`actions/docker-build`](actions/docker-build) | Buildx with a per-image GHA layer cache; load locally or push |
+| [`actions/ecr-login`](actions/ecr-login) | Authenticate Docker to ECR, optionally creating the repository |
+| [`actions/s3-image-upload`](actions/s3-image-upload) | `docker save` to S3, immutable copy first |
+| [`actions/compute-version`](actions/compute-version) | One version per run, from tag, manifest or run number |
+| [`actions/codeartifact-login`](actions/codeartifact-login) | Configure npm, pip, twine, Maven or Gradle against CodeArtifact |
+| [`actions/setup-node`](actions/setup-node) | Node with npm/yarn/pnpm caching and a lockfile-faithful install |
+| [`actions/setup-python`](actions/setup-python) | Python with pip caching, requirements or pyproject |
+| [`actions/setup-java`](actions/setup-java) | JDK with Maven/Gradle caching and a generated `settings.xml` |
+| [`actions/runner-disk-cleanup`](actions/runner-disk-cleanup) | Reclaim runner disk **inside** the job that needs it |
 
 ---
 
-## Required Repository Setup
+## Configuration
 
-### Environment Variables (Repository Variables)
+Set per GitHub Environment, not per repository — that is what makes `dev` and
+`prod` differ without any branching in the workflow.
 
-Set these in your repository's Settings > Environments > [environment] > Environment variables:
+| Variable | Needed for |
+| --- | --- |
+| `AWS_REGION` | Everything. Deployments fail fast without it rather than guessing |
+| `S3_BUILD_BUCKET` | EC2 path |
+| `PORT_MAPPING` | EC2 path |
+| `CLOUDWATCH_LOG_GROUP`, `CLOUDWATCH_LOG_STREAM` | EC2 path, optional |
+| `STATIC_SITE_BUCKET`, `CLOUDFRONT_DISTRIBUTION_ID` | Static path |
 
-| Variable                | Description                                           |
-| ----------------------- | ----------------------------------------------------- |
-| `S3_BUILD_BUCKET`       | S3 bucket name for storing builds                     |
-| `PORT_MAPPING`          | Docker port mapping (e.g., `8080:80`)                 |
-| `UI_PORT_MAPPING`       | Port mapping for UI apps (when `is_ui_app` is true)  |
-| `CLOUDWATCH_LOG_GROUP`  | CloudWatch log group name                             |
-| `CLOUDWATCH_LOG_STREAM` | CloudWatch log stream name                            |
+| Secret | Needed for |
+| --- | --- |
+| `IAM_ROLE_ARN` | Everything |
+| `EC2_INSTANCE_ID` | EC2 path |
+| `AWS_SECRETS_ARN` | EC2 path, when the container needs a `.env` |
 
-### Secrets
+Full setup, including the IAM trust policy: [docs/onboarding.md](docs/onboarding.md).
 
-Set these in your repository's Settings > Secrets and variables > Actions:
+## Versioning
 
-| Secret            | Description                                                |
-| ----------------- | ---------------------------------------------------------- |
-| `IAM_ROLE_ARN`    | AWS IAM Role ARN for OIDC authentication                   |
-| `EC2_INSTANCE_ID` | Target EC2 Instance ID                                     |
-| `AWS_SECRETS_ARN` | (Optional) AWS Secrets Manager ARN containing .env content |
+Pin to `@v1`. It moves forward within the major line, so fixes arrive
+automatically and breaking changes cannot.
 
-### Required Files in Your Repository
+| Ref | Moves | Use for |
+| --- | --- | --- |
+| `@v1` | Within the major line | **Default** |
+| `@v1.4.2` | Never | Production-critical or regulated repositories |
+| `@main` | Every merge | This repository's own testing only |
 
-These files should be in your application directory (root or specified via `app_path`):
+Details, and how to cut a release: [docs/conventions.md](docs/conventions.md#versioning).
 
-- `Dockerfile` - For building the Docker image
-- `docker-compose.yml` - For running the container on EC2
-- `package.json` - With build scripts (`build`, `build:dev`, `build:uat`, `build:prod`)
-- `package-lock.json` - For npm caching
+## Security
 
----
+- **No stored AWS credentials.** GitHub OIDC is exchanged for short-lived STS credentials per run
+- **Roles scoped to `repo:<org>/<repo>:environment:<env>`**, so a role usable in `prod` requires a job that passed `prod`'s protection rules
+- **No inbound access to instances.** Everything travels as an SSM document
+- **Runtime secrets stay in Secrets Manager**, fetched at deploy time
+- **No `secrets: inherit`.** Every workflow names exactly what it needs
+- **No `${{ }}` interpolated into shell bodies.** Values arrive through `env:`
 
-## AWS Region Mapping
-
-Deploy workflows select the AWS region from the branch that triggers the run:
-
-| Branch   | AWS Region  | Typical use  |
-| -------- | ----------- | ------------ |
-| `release/*` | `us-east-1` | UAT / release |
-| `main`      | `ap-south-1`| Production    |
-| Other (e.g. `dev`, feature branches) | `ap-south-1` | Development |
-
-Ensure EC2 instances, S3 buckets, and IAM roles are in the region that matches the branch you deploy from. Secrets Manager always reads from `ap-south-1`.
+Reasoning: [docs/contracts.md](docs/contracts.md).
 
 ---
 
-## AWS Prerequisites
+## Contributing
 
-1. **OIDC Provider** configured for GitHub Actions
-2. **IAM Role** with permissions for:
-   - S3 (read/write to build bucket)
-   - SSM (SendCommand, GetCommandInvocation)
-   - Secrets Manager (GetSecretValue) - if using AWS_SECRETS_ARN
-3. **EC2 Instance** with:
-   - SSM Agent installed and running
-   - Docker installed
-   - IAM Instance Profile with S3 read access
+`validate.yml` runs actionlint, shellcheck, YAML parsing, internal reference
+consistency, and a check that every workflow and action is documented. It must
+pass before merge — a break here breaks every repository in the organisation.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[docs/conventions.md](docs/conventions.md).
+
+## Documentation
+
+| Document | Answers |
+| --- | --- |
+| [architecture.md](docs/architecture.md) | How it fits together, and why |
+| [conventions.md](docs/conventions.md) | Naming, branching, versioning, coding standards |
+| [contracts.md](docs/contracts.md) | Designing inputs, outputs, secrets, permissions |
+| [decision-matrix.md](docs/decision-matrix.md) | Reusable workflow, composite action, or JavaScript action? |
+| [onboarding.md](docs/onboarding.md) | Wiring up a new repository |
+| [pitfalls.md](docs/pitfalls.md) | Anti-patterns to avoid |
+| [examples/](examples/) | Working files to copy |
 
 ---
 
-## Developer
-
-Navdeep Singh
-Email: navdeep.singh@solugenix.com
+Maintained by Platform Engineering · Navdeep Singh <navdeep.singh@solugenix.com>

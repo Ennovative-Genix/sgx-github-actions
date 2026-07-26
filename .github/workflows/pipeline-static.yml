@@ -1,0 +1,114 @@
+name: Pipeline - Static Site
+
+# Angular and React front ends served from S3 behind CloudFront.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, qa, uat, stg, prod)."
+        required: true
+        type: string
+      framework:
+        description: "angular, react, nx or node."
+        required: false
+        type: string
+        default: "react"
+      node_version:
+        description: "Node.js version used for the build."
+        required: false
+        type: string
+        default: "20.x"
+      package_manager:
+        description: "npm, yarn or pnpm."
+        required: false
+        type: string
+        default: "npm"
+      app_path:
+        description: "Path to the application directory, relative to the repository root."
+        required: false
+        type: string
+        default: "."
+      build_output:
+        description: "Build output directory, relative to app_path."
+        required: false
+        type: string
+        default: "dist"
+      build_script:
+        description: "npm script used for the build. Defaults to 'build:<environment>' when it exists, else 'build'."
+        required: false
+        type: string
+        default: ""
+      run_test:
+        description: "Run tests before deploying."
+        required: false
+        type: boolean
+        default: true
+      bucket:
+        description: "Destination S3 bucket. Falls back to the STATIC_SITE_BUCKET environment variable."
+        required: false
+        type: string
+        default: ""
+      destination_prefix:
+        description: "Key prefix inside the bucket."
+        required: false
+        type: string
+        default: ""
+      distribution_id:
+        description: "CloudFront distribution to invalidate. Falls back to the CLOUDFRONT_DISTRIBUTION_ID environment variable."
+        required: false
+        type: string
+        default: ""
+      aws_region:
+        description: "Region override. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication."
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/ci-node.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      framework: ${{ inputs.framework }}
+      node_versions: '["${{ inputs.node_version }}"]'
+      package_manager: ${{ inputs.package_manager }}
+      app_path: ${{ inputs.app_path }}
+      target_env: ${{ inputs.environment }}
+      build_script: ${{ inputs.build_script }}
+      run_test: ${{ inputs.run_test }}
+      run_lint: false
+      artifact_name: static-site
+      artifact_path: ${{ inputs.build_output }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  deploy:
+    name: Deploy
+    needs: build
+    uses: ./.github/workflows/deploy-s3-cloudfront.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      bucket: ${{ inputs.bucket }}
+      # ci-node.yml suffixes artifacts with the Node version to keep matrix
+      # builds from colliding; single-version builds land on one predictable name.
+      artifact_name: static-site-node${{ inputs.node_version }}
+      source_path: ${{ inputs.build_output }}
+      destination_prefix: ${{ inputs.destination_prefix }}
+      distribution_id: ${{ inputs.distribution_id }}
+      aws_region: ${{ inputs.aws_region }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}

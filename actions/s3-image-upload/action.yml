@@ -1,0 +1,93 @@
+name: "S3 Image Upload"
+description: "Save a local Docker image to a compressed tarball and upload it to S3 as both an immutable versioned object and a moving 'latest' pointer."
+
+inputs:
+  image-ref:
+    description: "Local image reference to save, e.g. 'billing-api:latest'."
+    required: true
+  bucket:
+    description: "Destination S3 bucket."
+    required: true
+  s3-path:
+    description: "Key prefix inside the bucket."
+    required: true
+  region:
+    description: "Bucket region."
+    required: true
+  version:
+    description: "Version label for the immutable copy. Defaults to the commit SHA."
+    required: false
+    default: ""
+  latest-storage-class:
+    description: "Storage class for the moving 'latest' object, which is read on every deploy."
+    required: false
+    default: "STANDARD"
+  archive-storage-class:
+    description: "Storage class for the immutable versioned object, which is read only during rollback."
+    required: false
+    default: "GLACIER_IR"
+
+outputs:
+  latest-key:
+    description: "S3 key of the moving 'latest' object."
+    value: ${{ steps.upload.outputs.latest-key }}
+  version-key:
+    description: "S3 key of the immutable versioned object."
+    value: ${{ steps.upload.outputs.version-key }}
+
+runs:
+  using: composite
+  steps:
+    - name: Save and upload image
+      id: upload
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+        BUCKET: ${{ inputs.bucket }}
+        S3_PATH: ${{ inputs.s3-path }}
+        AWS_REGION: ${{ inputs.region }}
+        VERSION: ${{ inputs.version }}
+        LATEST_STORAGE_CLASS: ${{ inputs.latest-storage-class }}
+        ARCHIVE_STORAGE_CLASS: ${{ inputs.archive-storage-class }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$BUCKET" ]; then
+          echo "::error title=Missing bucket::No S3 bucket was supplied. Check that the S3_BUILD_BUCKET variable is set on the target environment."
+          exit 1
+        fi
+
+        version="${VERSION:-$GITHUB_SHA}"
+        tarball="image.tar.gz"
+        prefix="${S3_PATH%/}"
+
+        echo "Saving $IMAGE_REF"
+        docker save "$IMAGE_REF" | gzip > "$tarball"
+        ls -lh "$tarball"
+
+        latest_key="${prefix}/latest.tar.gz"
+        version_key="${prefix}/${version}.tar.gz"
+
+        # The immutable copy goes up first. If the run dies between the two
+        # uploads, 'latest' still points at an image that is fully archived.
+        aws s3 cp "$tarball" "s3://${BUCKET}/${version_key}" \
+          --region "$AWS_REGION" \
+          --storage-class "$ARCHIVE_STORAGE_CLASS"
+
+        aws s3 cp "$tarball" "s3://${BUCKET}/${latest_key}" \
+          --region "$AWS_REGION" \
+          --storage-class "$LATEST_STORAGE_CLASS"
+
+        rm -f "$tarball"
+
+        {
+          echo "latest-key=$latest_key"
+          echo "version-key=$version_key"
+        } >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### Image published to S3"
+          echo ""
+          echo "- Bucket: \`${BUCKET}\`"
+          echo "- Rollback key: \`${version_key}\`"
+        } >> "$GITHUB_STEP_SUMMARY"

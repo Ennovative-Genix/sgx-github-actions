@@ -1,0 +1,157 @@
+name: Pipeline - EKS
+
+# Build an image into ECR, then roll it out to a cluster.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, qa, uat, stg, prod)."
+        required: true
+        type: string
+      ecr_repository:
+        description: "ECR repository name."
+        required: true
+        type: string
+      cluster_name:
+        description: "EKS cluster name."
+        required: true
+        type: string
+      namespace:
+        description: "Kubernetes namespace."
+        required: false
+        type: string
+        default: "default"
+      deploy_method:
+        description: "kubectl, kustomize or helm."
+        required: false
+        type: string
+        default: "kubectl"
+      deployment_name:
+        description: "Deployment to update. Required for the kubectl method."
+        required: false
+        type: string
+        default: ""
+      container_name:
+        description: "Container inside the Deployment. Defaults to deployment_name."
+        required: false
+        type: string
+        default: ""
+      manifest_path:
+        description: "Kustomize overlay directory."
+        required: false
+        type: string
+        default: ""
+      kustomize_image_name:
+        description: "Image name in the manifests that kustomize rewrites."
+        required: false
+        type: string
+        default: ""
+      helm_chart_path:
+        description: "Chart directory or reference."
+        required: false
+        type: string
+        default: ""
+      helm_release_name:
+        description: "Helm release name."
+        required: false
+        type: string
+        default: ""
+      helm_values_file:
+        description: "Values file passed to helm with -f."
+        required: false
+        type: string
+        default: ""
+      app_path:
+        description: "Path to the application directory, relative to the repository root."
+        required: false
+        type: string
+        default: "."
+      dockerfile:
+        description: "Dockerfile path, relative to app_path."
+        required: false
+        type: string
+        default: "Dockerfile"
+      build_args:
+        description: "Extra build arguments, one KEY=value per line."
+        required: false
+        type: string
+        default: ""
+      platforms:
+        description: "Target platforms. Use linux/arm64 for Graviton node groups."
+        required: false
+        type: string
+        default: "linux/amd64"
+      rollout_timeout:
+        description: "How long to wait for the rollout to become ready."
+        required: false
+        type: string
+        default: "10m"
+      aws_region:
+        description: "Region override. Falls back to the AWS_REGION environment variable."
+        required: false
+        type: string
+        default: ""
+      version_strategy:
+        description: "Passed to compute-version: auto, tag, manifest or run-number."
+        required: false
+        type: string
+        default: "auto"
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication."
+        required: true
+    outputs:
+      image_uri:
+        description: "Image reference that was deployed."
+        value: ${{ jobs.build.outputs.image_uri }}
+      version:
+        description: "Version that was deployed."
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build-docker-ecr.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      ecr_repository: ${{ inputs.ecr_repository }}
+      app_path: ${{ inputs.app_path }}
+      dockerfile: ${{ inputs.dockerfile }}
+      build_args: ${{ inputs.build_args }}
+      platforms: ${{ inputs.platforms }}
+      aws_region: ${{ inputs.aws_region }}
+      version_strategy: ${{ inputs.version_strategy }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
+  deploy:
+    name: Deploy
+    needs: build
+    uses: ./.github/workflows/deploy-eks.yml
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ inputs.environment }}
+      cluster_name: ${{ inputs.cluster_name }}
+      namespace: ${{ inputs.namespace }}
+      deploy_method: ${{ inputs.deploy_method }}
+      image_uri: ${{ needs.build.outputs.image_uri }}
+      deployment_name: ${{ inputs.deployment_name }}
+      container_name: ${{ inputs.container_name }}
+      manifest_path: ${{ inputs.manifest_path }}
+      kustomize_image_name: ${{ inputs.kustomize_image_name }}
+      helm_chart_path: ${{ inputs.helm_chart_path }}
+      helm_release_name: ${{ inputs.helm_release_name }}
+      helm_values_file: ${{ inputs.helm_values_file }}
+      rollout_timeout: ${{ inputs.rollout_timeout }}
+      aws_region: ${{ inputs.aws_region }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}

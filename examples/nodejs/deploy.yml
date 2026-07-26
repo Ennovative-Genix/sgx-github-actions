@@ -1,0 +1,85 @@
+# Node.js service deployed to EC2.
+# Copy to .github/workflows/deploy.yml in your application repository.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [develop, staging, main]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        required: true
+        type: choice
+        options: [dev, qa, uat, stg, prod]
+
+concurrency:
+  # One deployment per branch at a time. Never cancel an in-flight deployment:
+  # a half-applied rollout is worse than a queued one.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.name }}
+      deployable: ${{ steps.env.outputs.deployable }}
+    steps:
+      - id: env
+        env:
+          MANUAL_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$MANUAL_ENV" ]; then
+            name="$MANUAL_ENV"
+          else
+            case "$GITHUB_REF_NAME" in
+              main)    name=prod ;;
+              staging) name=stg ;;
+              develop) name=dev ;;
+              *)       name=dev ;;
+            esac
+          fi
+
+          deployable=true
+          [ "$GITHUB_EVENT_NAME" = "pull_request" ] && deployable=false
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "deployable=$deployable" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI
+    needs: resolve
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
+    with:
+      framework: node
+      node_versions: '["20.x", "22.x"]'
+      app_path: .
+      target_env: ${{ needs.resolve.outputs.environment }}
+
+  deploy:
+    name: Deploy
+    needs: [resolve, ci]
+    if: needs.resolve.outputs.deployable == 'true'
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-ec2.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ needs.resolve.outputs.environment }}
+      docker_image_name: billing-api
+      s3_path: billing-api/builds
+      health_check_url: http://localhost:8080/health
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+      AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}

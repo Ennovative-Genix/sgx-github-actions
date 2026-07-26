@@ -1,0 +1,59 @@
+version: 2
+
+updates:
+  # Every consumer inherits the action versions pinned here, so upstream security
+  # fixes need to land in this repository before they can reach anyone else.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(deps)"
+
+  # `directory: /` only covers .github/workflows. Composite actions each need
+  # their own entry.
+  - package-ecosystem: github-actions
+    directory: /actions/aws-oidc-auth
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /actions/setup-node
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /actions/setup-python
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /actions/setup-java
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /actions/docker-build
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /actions/ecr-login
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"

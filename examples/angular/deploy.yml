@@ -1,0 +1,50 @@
+# Angular application served from S3 behind CloudFront.
+# Copy to .github/workflows/deploy.yml in your application repository.
+#
+# To serve the app from a container on EC2 instead, use pipeline-ec2.yml with
+# the front end's port_mapping — see examples/nodejs/deploy.yml.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # On pull requests, build and test without deploying anywhere.
+  verify:
+    name: Verify
+    if: github.event_name == 'pull_request'
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/ci-node.yml@v1
+    with:
+      framework: angular
+      node_versions: '["20.x"]'
+      # framework: angular supplies --watch=false --browsers=ChromeHeadless,
+      # without which `ng test` never exits on CI.
+      target_env: dev
+
+  deploy:
+    name: Deploy
+    if: github.event_name == 'push'
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/pipeline-static.yml@v1
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      framework: angular
+      node_version: "20.x"
+      # Angular 17+ emits dist/<project>/browser; check your angular.json outputPath.
+      build_output: dist/portal/browser
+      run_test: true
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
