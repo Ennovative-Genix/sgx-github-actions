@@ -110,7 +110,6 @@ runs:
               npm config set registry "$CA_ENDPOINT"
             fi
             npm config set "//${host_path}:_authToken" "$CA_TOKEN"
-            npm config set "//${host_path}:always-auth" true
             echo "npm configured against CodeArtifact."
             ;;
 
