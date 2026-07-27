@@ -192,9 +192,18 @@ jobs:
           # unscoped package silently targets registry.npmjs.org even with
           # CodeArtifact configured. These inputs are required, so the intent is
           # unambiguous: name the registry rather than infer it from the name.
-          args=(--access "$ACCESS" --tag "$tag")
+          args=(--tag "$tag")
           [ -n "$REGISTRY" ] && args+=(--registry "$REGISTRY")
           [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+
+          # npm rejects --access on an unscoped package (EUNSCOPED) whatever the
+          # value, and on CodeArtifact the flag decides nothing regardless:
+          # visibility there is a repository policy, not a package attribute.
+          package_name="$(node -e "process.stdout.write(require('./package.json').name || '')")"
+          case "$package_name" in
+            @*/*) args+=(--access "$ACCESS") ;;
+            *) echo "::notice title=Unscoped package::'${package_name}' is unscoped, so access='${ACCESS}' does not apply and is being omitted." ;;
+          esac
 
           npm publish "${args[@]}"
 
