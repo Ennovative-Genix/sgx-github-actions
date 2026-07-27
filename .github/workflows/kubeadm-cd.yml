@@ -170,6 +170,17 @@ jobs:
           kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || \
           kubectl create namespace ${NAMESPACE}
 
+      - name: Refresh ECR Pull Secret
+        run: |
+          TOKEN=$(aws ecr get-login-password --region ${AWS_REGION})
+
+          kubectl create secret docker-registry ecr-secret \
+            --docker-server=${{ steps.login-ecr.outputs.registry }} \
+            --docker-username=AWS \
+            --docker-password="$TOKEN" \
+            -n ${NAMESPACE} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Apply Kubernetes Manifests
         run: |
           kubectl apply -f ${{ inputs.manifest_path }} -n ${NAMESPACE}
