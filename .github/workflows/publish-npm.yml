@@ -42,6 +42,11 @@ on:
         required: false
         type: string
         default: "restricted"
+      dist_tag:
+        description: "npm dist-tag to publish under. Leave empty to derive it: 'latest' for a release, the prerelease identifier (1.0.0-dev.14 -> dev) otherwise."
+        required: false
+        type: string
+        default: ""
       dry_run:
         description: "Run every step but stop short of publishing."
         required: false
@@ -156,10 +161,32 @@ jobs:
           ACCESS: ${{ inputs.access }}
           DRY_RUN: ${{ inputs.dry_run }}
           VERSION: ${{ steps.version.outputs.version }}
+          IS_PRERELEASE: ${{ steps.version.outputs.is-prerelease }}
+          DIST_TAG: ${{ inputs.dist_tag }}
         run: |
           set -euo pipefail
 
-          args=(--access "$ACCESS")
+          # npm 11 refuses to publish a prerelease without an explicit --tag, so
+          # that a dev build can never take over 'latest' by omission.
+          tag="$DIST_TAG"
+          if [ -z "$tag" ]; then
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              # 1.0.0-dev.14 -> dev. Strip build metadata, the release core, then
+              # everything past the identifier.
+              tag="${VERSION%%+*}"
+              tag="${tag#*-}"
+              tag="${tag%%.*}"
+              # A numeric or malformed qualifier names no channel; npm also
+              # rejects a dist-tag that parses as a version.
+              case "$tag" in
+                '' | [0-9]* | *[!a-zA-Z0-9-]*) tag="prerelease" ;;
+              esac
+            else
+              tag="latest"
+            fi
+          fi
+
+          args=(--access "$ACCESS" --tag "$tag")
           [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
 
           npm publish "${args[@]}"
@@ -168,6 +195,7 @@ jobs:
             echo "### npm package published"
             echo ""
             echo "- Version: \`${VERSION}\`"
+            echo "- Dist-tag: \`${tag}\`"
             echo "- Repository: \`${{ inputs.codeartifact_domain }}/${{ inputs.codeartifact_repository }}\`"
             echo "- Dry run: \`${DRY_RUN}\`"
           } >> "$GITHUB_STEP_SUMMARY"
