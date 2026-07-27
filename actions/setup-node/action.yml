@@ -43,6 +43,11 @@ inputs:
     required: false
     default: ""
 
+outputs:
+  registry-endpoint:
+    description: "CodeArtifact npm endpoint that was configured, or empty when publishing to the public registry."
+    value: ${{ steps.codeartifact.outputs.endpoint }}
+
 runs:
   using: composite
   steps:
@@ -60,6 +65,7 @@ runs:
         cache-dependency-path: ${{ inputs.cache == 'true' && format('{0}/{1}', inputs.working-directory, inputs.package-manager == 'npm' && 'package-lock.json' || inputs.package-manager == 'yarn' && 'yarn.lock' || 'pnpm-lock.yaml') || '' }}
 
     - name: Authenticate npm against CodeArtifact
+      id: codeartifact
       if: inputs.codeartifact-domain != ''
       uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@v2
       with:

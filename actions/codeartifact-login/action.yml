@@ -110,6 +110,13 @@ runs:
               npm config set registry "$CA_ENDPOINT"
             fi
             npm config set "//${host_path}:_authToken" "$CA_TOKEN"
+            # A repository-level .npmrc overrides the user-level one written
+            # above, and the shape AWS documents refers to the token by name.
+            # Exporting it keeps that idiom working, as maven and gradle do.
+            {
+              echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
+              echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
+            } >> "$GITHUB_ENV"
             echo "npm configured against CodeArtifact."
             ;;
 

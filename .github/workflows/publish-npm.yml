@@ -129,6 +129,7 @@ jobs:
           version-override: ${{ inputs.version }}
 
       - name: Setup Node and install dependencies
+        id: node
         uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@v2
         with:
           node-version: ${{ inputs.node_version }}
@@ -163,6 +164,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           IS_PRERELEASE: ${{ steps.version.outputs.is-prerelease }}
           DIST_TAG: ${{ inputs.dist_tag }}
+          REGISTRY: ${{ steps.node.outputs.registry-endpoint }}
         run: |
           set -euo pipefail
 
@@ -186,7 +188,12 @@ jobs:
             fi
           fi
 
+          # npm picks the publish registry from the package's scope, so an
+          # unscoped package silently targets registry.npmjs.org even with
+          # CodeArtifact configured. These inputs are required, so the intent is
+          # unambiguous: name the registry rather than infer it from the name.
           args=(--access "$ACCESS" --tag "$tag")
+          [ -n "$REGISTRY" ] && args+=(--registry "$REGISTRY")
           [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
 
           npm publish "${args[@]}"
