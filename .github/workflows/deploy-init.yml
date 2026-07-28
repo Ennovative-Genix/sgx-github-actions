@@ -40,7 +40,14 @@ on:
 jobs:
   pre-build-cleanup:
     name: Pre-Build Cleanup
-    uses: ./.github/workflows/prebuild-cleanup.yml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove large preinstalled toolchains
+        run: |
+          sudo rm -rf /usr/local/lib/android        # ~12 GB  Android SDK + NDK
+          sudo rm -rf /usr/local/.ghcup /opt/ghc    # ~6 GB   Haskell (GHC, cabal, stack)
+          sudo rm -rf /usr/share/swift              # ~2 GB   Swift toolchain
+          sudo rm -rf /usr/lib/jvm                  # ~2 GB   Preinstalled JDKs
 
   build-and-upload:
     name: Build and Upload to S3
