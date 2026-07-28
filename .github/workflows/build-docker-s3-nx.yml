@@ -1,0 +1,91 @@
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (dev, uat, stg, prod)"
+        required: true
+        type: string
+      node_version:
+        description: "Node.js version to use"
+        required: false
+        type: string
+        default: "24.x"
+      docker_image_name:
+        description: "Docker image name"
+        required: true
+        type: string
+      s3_path:
+        description: "S3 path prefix for uploads"
+        required: true
+        type: string
+      app_path:
+        description: "Path to the application directory (relative to repo root). Defaults to root."
+        required: false
+        type: string
+        default: "."
+      is_ui_app:
+        description: "Whether the app is a UI app"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      IAM_ROLE_ARN:
+        description: "AWS IAM Role ARN for OIDC authentication"
+        required: true
+
+jobs:
+  build-docker-upload:
+    name: Build Project, Docker Image and Upload to S3
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      # release → us-east-1,refactor, staging, main (prod) → us-east-1, dev → ap-south-1
+      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1' || (github.ref_name == 'main') && 'us-east-1' || (github.ref_name == 'refactor') && 'us-east-1' || (github.ref_name == 'staging') && 'us-east-1' || 'ap-south-1' }}
+      S3_BUILD_BUCKET: ${{ vars.S3_BUILD_BUCKET }}
+      TARGET_ENV: ${{ inputs.environment }}
+      APP_PATH: ${{ inputs.app_path }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Docker build client
+        if: ${{ inputs.is_ui_app == true  }}
+        working-directory: ${{ env.APP_PATH }}
+        run: |
+          docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile.client -t ${{ inputs.docker_image_name }}:latest .
+          echo "Docker image ${{ inputs.docker_image_name }}:latest built"
+
+      - name: Docker build server
+        if: ${{ inputs.is_ui_app == false }}
+        working-directory: ${{ env.APP_PATH }}
+        run: |
+          docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile.server -t ${{ inputs.docker_image_name }}:latest .
+          echo "Docker image ${{ inputs.docker_image_name }}:latest built"
+
+      - name: Save Docker image to tarball
+        run: |
+          docker save ${{ inputs.docker_image_name }}:latest | gzip > ${{ inputs.docker_image_name }}-latest.tar.gz
+          ls -lh ${{ inputs.docker_image_name }}-latest.tar.gz
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Build-Upload-${{ github.run_id }}
+
+      - name: Upload "latest" to S3 (STANDARD)
+        run: |
+          aws s3 cp ${{ inputs.docker_image_name }}-latest.tar.gz s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/latest.tar.gz --region ${{ env.AWS_REGION }} --storage-class STANDARD
+
+      - name: Upload "sha" to S3 (GLACIER_IR)
+        run: |
+          aws s3 cp ${{ inputs.docker_image_name }}-latest.tar.gz s3://${{ env.S3_BUILD_BUCKET }}/${{ inputs.s3_path }}/${{ github.sha }}.tar.gz --region ${{ env.AWS_REGION }} --storage-class GLACIER_IR

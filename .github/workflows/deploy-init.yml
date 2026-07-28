@@ -27,6 +27,11 @@ on:
         required: false
         type: boolean
         default: false
+      is_nx_app:
+        description: "Whether the app is an NX app"
+        required: false
+        type: boolean
+        default: false
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -49,9 +54,23 @@ jobs:
           sudo rm -rf /usr/share/swift              # ~2 GB   Swift toolchain
           sudo rm -rf /usr/lib/jvm                  # ~2 GB   Preinstalled JDKs
 
+  build-and-upload-nx:
+    name: Build NX and Upload to S3
+    needs: pre-build-cleanup
+    if: ${{ inputs.is_nx_app == true }}
+    uses: ./.github/workflows/build-docker-s3-nx.yml
+    with:
+      environment: ${{ inputs.environment }}
+      docker_image_name: ${{ inputs.docker_image_name }}
+      s3_path: ${{ inputs.s3_path }}
+      app_path: ${{ inputs.app_path }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+
   build-and-upload:
     name: Build and Upload to S3
     needs: pre-build-cleanup
+    if: ${{ inputs.is_nx_app == false }}
     uses: ./.github/workflows/build-docker-s3.yml
     with:
       environment: ${{ inputs.environment }}
@@ -63,7 +82,9 @@ jobs:
 
   load-docker-image:
     name: Load Docker to EC2
-    needs: build-and-upload
+    needs:
+      - build-and-upload-nx
+      - build-and-upload
     uses: ./.github/workflows/deploy-ec2-load-docker.yml
     with:
       environment: ${{ inputs.environment }}
