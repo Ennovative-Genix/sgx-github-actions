@@ -88,7 +88,7 @@ jobs:
 
       - name: Configure AWS credentials
         if: inputs.codeartifact_domain != ''
-        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@v2
+        uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@development
         with:
           role-arn: ${{ secrets.IAM_ROLE_ARN }}
           region: ${{ inputs.aws_region }}
@@ -97,7 +97,7 @@ jobs:
 
       - name: Setup Node and install dependencies
         id: node
-        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@v2
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@development
         with:
           node-version: ${{ matrix.node-version }}
           working-directory: ${{ inputs.app_path }}
@@ -109,7 +109,7 @@ jobs:
 
       - name: Compute version
         id: version
-        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@v2
+        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@development
         with:
           working-directory: ${{ inputs.app_path }}
           environment: ${{ inputs.environment }}
