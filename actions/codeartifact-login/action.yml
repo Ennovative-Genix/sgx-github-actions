@@ -1,10 +1,7 @@
 name: "CodeArtifact Login"
-description: "Authenticate a package manager against an AWS CodeArtifact repository. Requires AWS credentials to already be configured."
+description: "Authenticate npm against an AWS CodeArtifact repository. Requires AWS credentials to already be configured."
 
 inputs:
-  tool:
-    description: "Package manager to configure: npm, pip, twine, maven or gradle."
-    required: true
   domain:
     description: "CodeArtifact domain."
     required: true
@@ -33,7 +30,7 @@ outputs:
     description: "CodeArtifact authorization token. Registered as a masked secret."
     value: ${{ steps.token.outputs.token }}
   endpoint:
-    description: "Repository endpoint URL for the requested tool."
+    description: "npm repository endpoint URL."
     value: ${{ steps.token.outputs.endpoint }}
 
 runs:
@@ -43,7 +40,6 @@ runs:
       id: token
       shell: bash
       env:
-        CA_TOOL: ${{ inputs.tool }}
         CA_DOMAIN: ${{ inputs.domain }}
         CA_REPOSITORY: ${{ inputs.repository }}
         CA_DOMAIN_OWNER: ${{ inputs.domain-owner }}
@@ -66,83 +62,40 @@ runs:
         echo "::add-mask::$token"
         echo "token=$token" >> "$GITHUB_OUTPUT"
 
-        # `format` differs per ecosystem; the endpoint shape does not.
-        case "$CA_TOOL" in
-          npm)            format=npm ;;
-          pip | twine)    format=pypi ;;
-          maven | gradle) format=maven ;;
-          *)
-            echo "::error title=Unsupported tool::'$CA_TOOL' is not one of npm, pip, twine, maven, gradle."
-            exit 1
-            ;;
-        esac
-
         endpoint="$(aws codeartifact get-repository-endpoint \
           "${args[@]}" \
           --repository "$CA_REPOSITORY" \
-          --format "$format" \
+          --format npm \
           --query repositoryEndpoint \
           --output text)"
 
         echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
-        echo "Resolved $CA_TOOL endpoint: $endpoint"
+        echo "Resolved npm endpoint: $endpoint"
 
-    - name: Configure package manager
+    - name: Configure npm
       shell: bash
       env:
-        CA_TOOL: ${{ inputs.tool }}
         CA_NAMESPACE: ${{ inputs.namespace }}
         CA_TOKEN: ${{ steps.token.outputs.token }}
         CA_ENDPOINT: ${{ steps.token.outputs.endpoint }}
-        CA_DOMAIN: ${{ inputs.domain }}
-        CA_REPOSITORY: ${{ inputs.repository }}
       run: |
         set -euo pipefail
 
-        # Strip the protocol; npm and pip want different shapes of the same URL.
+        # npm wants the auth key without the protocol, and the registry with it.
         host_path="${CA_ENDPOINT#https://}"
 
-        case "$CA_TOOL" in
-          npm)
-            if [ -n "$CA_NAMESPACE" ]; then
-              npm config set "@${CA_NAMESPACE}:registry" "$CA_ENDPOINT"
-            else
-              npm config set registry "$CA_ENDPOINT"
-            fi
-            npm config set "//${host_path}:_authToken" "$CA_TOKEN"
-            # A repository-level .npmrc overrides the user-level one written
-            # above, and the shape AWS documents refers to the token by name.
-            # Exporting it keeps that idiom working, as maven and gradle do.
-            {
-              echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
-              echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
-            } >> "$GITHUB_ENV"
-            echo "npm configured against CodeArtifact."
-            ;;
+        if [ -n "$CA_NAMESPACE" ]; then
+          npm config set "@${CA_NAMESPACE}:registry" "$CA_ENDPOINT"
+        else
+          npm config set registry "$CA_ENDPOINT"
+        fi
+        npm config set "//${host_path}:_authToken" "$CA_TOKEN"
 
-          pip)
-            pip config set global.index-url "https://aws:${CA_TOKEN}@${host_path}simple/"
-            echo "pip configured against CodeArtifact."
-            ;;
-
-          twine)
-            {
-              echo "TWINE_USERNAME=aws"
-              echo "TWINE_PASSWORD=${CA_TOKEN}"
-              echo "TWINE_REPOSITORY_URL=${CA_ENDPOINT}"
-            } >> "$GITHUB_ENV"
-            echo "twine configured against CodeArtifact."
-            ;;
-
-          maven | gradle)
-            # Both read the token from the environment; the settings.xml or
-            # build.gradle in the consuming repository references it by name.
-            {
-              echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
-              echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
-              echo "CODEARTIFACT_DOMAIN=${CA_DOMAIN}"
-              echo "CODEARTIFACT_REPOSITORY=${CA_REPOSITORY}"
-            } >> "$GITHUB_ENV"
-            echo "$CA_TOOL environment configured against CodeArtifact."
-            ;;
-        esac
+        # A repository-level .npmrc overrides the user-level one written above,
+        # and the shape AWS documents refers to the token by name. Exporting it
+        # keeps that idiom working.
+        {
+          echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
+          echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
+        } >> "$GITHUB_ENV"
+        echo "npm configured against CodeArtifact."

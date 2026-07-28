@@ -5,11 +5,7 @@ inputs:
   node-version:
     description: "Node.js version to install."
     required: false
-    default: "20.x"
-  package-manager:
-    description: "npm, yarn or pnpm."
-    required: false
-    default: "npm"
+    default: "24.x"
   working-directory:
     description: "Directory holding the lockfile and package.json."
     required: false
@@ -51,25 +47,18 @@ outputs:
 runs:
   using: composite
   steps:
-    # pnpm has to be on PATH before setup-node runs, otherwise setup-node cannot
-    # locate the store directory it is being asked to cache.
-    - name: Install pnpm
-      if: inputs.package-manager == 'pnpm'
-      uses: pnpm/action-setup@v4
-
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: ${{ inputs.node-version }}
-        cache: ${{ inputs.cache == 'true' && inputs.package-manager || '' }}
-        cache-dependency-path: ${{ inputs.cache == 'true' && format('{0}/{1}', inputs.working-directory, inputs.package-manager == 'npm' && 'package-lock.json' || inputs.package-manager == 'yarn' && 'yarn.lock' || 'pnpm-lock.yaml') || '' }}
+        cache: ${{ inputs.cache == 'true' || '' }}
+        cache-dependency-path: ${{ inputs.cache == 'true' && format('{0}/{1}', inputs.working-directory, 'package-lock.json') || '' }}
 
     - name: Authenticate npm against CodeArtifact
       id: codeartifact
       if: inputs.codeartifact-domain != ''
       uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@v2
       with:
-        tool: npm
         domain: ${{ inputs.codeartifact-domain }}
         repository: ${{ inputs.codeartifact-repository }}
         domain-owner: ${{ inputs.codeartifact-domain-owner }}
@@ -80,30 +69,13 @@ runs:
       if: inputs.install == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      env:
-        PACKAGE_MANAGER: ${{ inputs.package-manager }}
       run: |
         set -euo pipefail
 
-        case "$PACKAGE_MANAGER" in
-          npm)
-            # `npm ci` requires a lockfile that agrees with package.json. Fall
-            # back rather than fail so a repository mid-migration still builds.
-            if [ -f package-lock.json ]; then
-              npm ci
-            else
-              echo "::warning title=No lockfile::package-lock.json is missing; falling back to 'npm install'."
-              npm install
-            fi
-            ;;
-          yarn)
-            yarn install --frozen-lockfile
-            ;;
-          pnpm)
-            pnpm install --frozen-lockfile
-            ;;
-          *)
-            echo "::error title=Unsupported package manager::'$PACKAGE_MANAGER' is not one of npm, yarn, pnpm."
-            exit 1
-            ;;
-        esac
+        if [ -f package-lock.json ]; then
+            npm ci
+          else
+            echo "::warning title=No lockfile::package-lock.json is missing; falling back to 'npm install'."
+            npm install
+          fi
+        ;;

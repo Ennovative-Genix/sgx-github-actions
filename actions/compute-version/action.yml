@@ -1,21 +1,13 @@
 name: "Compute Version"
-description: "Derive a single version string and the image tags that go with it, so every artifact from one run carries the same identity."
+description: "Derive a single version string from package.json, the git tag or the run number, so every artifact from one run carries the same identity."
 
 inputs:
-  strategy:
-    description: "auto, tag, manifest or run-number. 'auto' uses the git tag when the run was triggered by one, otherwise the manifest version plus run metadata."
-    required: false
-    default: "auto"
   working-directory:
-    description: "Directory holding package.json, pom.xml or pyproject.toml."
+    description: "Directory holding package.json."
     required: false
     default: "."
   environment:
     description: "Target environment. Folded into prerelease versions so dev and prod builds never collide."
-    required: false
-    default: ""
-  version-override:
-    description: "Use this exact version and skip all detection."
     required: false
     default: ""
 
@@ -23,18 +15,9 @@ outputs:
   version:
     description: "Full version string, e.g. 1.4.2 or 1.4.2-dev.87."
     value: ${{ steps.compute.outputs.version }}
-  base-version:
-    description: "The version without prerelease or build metadata, e.g. 1.4.2."
-    value: ${{ steps.compute.outputs.base-version }}
-  is-prerelease:
-    description: "'true' when the computed version carries a prerelease suffix."
-    value: ${{ steps.compute.outputs.is-prerelease }}
   short-sha:
     description: "Seven character commit SHA."
     value: ${{ steps.compute.outputs.short-sha }}
-  image-tags:
-    description: "Newline separated image tags: the version, the short SHA, and 'latest' for non-prereleases."
-    value: ${{ steps.compute.outputs.image-tags }}
 
 runs:
   using: composite
@@ -44,9 +27,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        VERSION_STRATEGY: ${{ inputs.strategy }}
         TARGET_ENV: ${{ inputs.environment }}
-        VERSION_OVERRIDE: ${{ inputs.version-override }}
       run: |
         set -euo pipefail
 
@@ -55,71 +36,18 @@ runs:
         read_manifest_version() {
           if [ -f package.json ]; then
             node -e "process.stdout.write(require('./package.json').version || '')" 2>/dev/null || true
-          elif [ -f pyproject.toml ]; then
-            sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' pyproject.toml | head -n1
-          elif [ -f pom.xml ]; then
-            # Parsed rather than grepped: a <parent> block declares a version
-            # before the project's own, and dependencies declare more after it.
-            python3 "$GITHUB_ACTION_PATH/read-pom-version.py"
           fi
         }
 
-        version=""
-
-        if [ -n "$VERSION_OVERRIDE" ]; then
-          version="$VERSION_OVERRIDE"
-
-        elif [ "$VERSION_STRATEGY" = "run-number" ]; then
-          version="0.0.${GITHUB_RUN_NUMBER}"
-
-        elif { [ "$VERSION_STRATEGY" = "tag" ] || [ "$VERSION_STRATEGY" = "auto" ]; } && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-          version="${GITHUB_REF_NAME#v}"
-
-        else
-          manifest_version="$(read_manifest_version)"
-          if [ -z "$manifest_version" ]; then
-            echo "::warning title=No manifest version::Could not read a version from package.json, pyproject.toml or pom.xml; defaulting to 0.0.0."
+        version="$(read_manifest_version)"
+        if [ -z "$version" ]; then
+            echo "::warning title=No version::Could not read a version from package.json; defaulting to 0.0.0."
             manifest_version="0.0.0"
-          fi
-
-          if [ "$VERSION_STRATEGY" = "manifest" ]; then
-            # Published verbatim, so a Maven -SNAPSHOT or a PEP 440 suffix in the
-            # manifest survives rather than being silently promoted to a release.
-            version="$manifest_version"
-          else
-            # An existing qualifier is replaced, not appended to: a pom at
-            # 1.5.0-SNAPSHOT must yield 1.5.0-dev.87, never 1.5.0-SNAPSHOT-dev.87.
-            release_core="${manifest_version%%-*}"
-            if [ -n "$TARGET_ENV" ]; then
-              version="${release_core}-${TARGET_ENV}.${GITHUB_RUN_NUMBER}"
-            else
-              version="${release_core}-${GITHUB_RUN_NUMBER}"
-            fi
-          fi
-        fi
-
-        base_version="${version%%-*}"
-        base_version="${base_version%%+*}"
-
-        case "$version" in
-          *-*) is_prerelease="true" ;;
-          *)   is_prerelease="false" ;;
-        esac
-
-        # Docker tags cannot contain '+', and only the stable line earns 'latest'.
-        image_tags="${version//+/_}"$'\n'"sha-${short_sha}"
-        if [ "$is_prerelease" = "false" ]; then
-          image_tags="${image_tags}"$'\n'"latest"
         fi
 
         {
           echo "version=$version"
-          echo "base-version=$base_version"
-          echo "is-prerelease=$is_prerelease"
           echo "short-sha=$short_sha"
-          echo "image-tags<<__TAGS__"
-          echo "$image_tags"
-          echo "__TAGS__"
         } >> "$GITHUB_OUTPUT"
 
         {
@@ -128,7 +56,5 @@ runs:
           echo "| Field | Value |"
           echo "| --- | --- |"
           echo "| Version | \`$version\` |"
-          echo "| Base | \`$base_version\` |"
-          echo "| Prerelease | \`$is_prerelease\` |"
           echo "| Commit | \`$short_sha\` |"
         } >> "$GITHUB_STEP_SUMMARY"
