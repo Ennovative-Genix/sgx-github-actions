@@ -76,7 +76,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: ${{ inputs.node_version }}
+        node-version: ["${{ inputs.node_version }}"]
 
     steps:
       - name: Checkout repository
