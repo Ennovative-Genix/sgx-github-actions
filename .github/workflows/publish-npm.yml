@@ -4,6 +4,11 @@ on:
   workflow_call:
     inputs:
       app_path:
+        description: "Working directory for the Node.js application."
+        required: false
+        type: string
+        default: "."
+      package_directory:
         description: "Path to the package directory, relative to the repository root."
         required: false
         type: string
@@ -84,7 +89,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure AWS credentials
         if: inputs.codeartifact_domain != ''
@@ -111,7 +116,7 @@ jobs:
         id: version
         uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@development
         with:
-          working-directory: ${{ inputs.app_path }}
+          working-directory: ${{ inputs.package_directory }}
           environment: ${{ inputs.environment }}
 
       - name: Lint
@@ -130,7 +135,6 @@ jobs:
         run: npm run ${{ inputs.build_script }}
 
       - name: Set package version
-        working-directory: ${{ inputs.app_path }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -138,7 +142,6 @@ jobs:
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Publish
-        working-directory: ${{ inputs.app_path }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
           REGISTRY: ${{ steps.node.outputs.registry-endpoint }}
