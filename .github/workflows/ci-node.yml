@@ -172,7 +172,7 @@ jobs:
           session-name: ci-node
 
       - name: Setup Node and install dependencies
-        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@v2
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           package-manager: ${{ inputs.package_manager }}

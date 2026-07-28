@@ -130,7 +130,7 @@ jobs:
 
       - name: Setup Node and install dependencies
         id: node
-        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@v2
+        uses: Ennovative-Genix/sgx-github-actions/actions/setup-node@v5
         with:
           node-version: ${{ inputs.node_version }}
           package-manager: ${{ inputs.package_manager }}
