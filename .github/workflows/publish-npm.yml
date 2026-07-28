@@ -9,7 +9,7 @@ on:
         type: string
         default: "."
       package_directory:
-        description: "Path to the package directory, relative to the repository root."
+        description: "Directory holding the package.json that gets versioned and published, relative to the repository root. In a workspace this is the library, not the repository root."
         required: false
         type: string
         default: "."
@@ -134,7 +134,12 @@ jobs:
         working-directory: ${{ inputs.app_path }}
         run: npm run ${{ inputs.build_script }}
 
+      # Versioning and publishing both belong to the package, not to the app that
+      # was built. In a workspace those are different directories, and running
+      # them at the repository root silently versions and publishes the root
+      # manifest instead.
       - name: Set package version
+        working-directory: ${{ inputs.package_directory }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -142,9 +147,12 @@ jobs:
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
       - name: Publish
+        working-directory: ${{ inputs.package_directory }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
           REGISTRY: ${{ steps.node.outputs.registry-endpoint }}
+          NAMESPACE: ${{ inputs.codeartifact_namespace }}
+          PACKAGE_DIRECTORY: ${{ inputs.package_directory }}
         run: |
           set -euo pipefail
 
@@ -153,11 +161,28 @@ jobs:
             exit 1
           fi
 
+          name="$(node -e "process.stdout.write(require('./package.json').name || '')")"
+          if [ -z "$name" ]; then
+            echo "::error title=No package name::'$(pwd)/package.json' declares no name."
+            exit 1
+          fi
+
+          # CodeArtifact takes the namespace from the package name alone -- there
+          # is no publish-time flag for it. Publishing the wrong package.json is
+          # therefore invisible except as a missing namespace, so check before
+          # rather than discover it in the repository afterwards.
+          if [ -n "$NAMESPACE" ] && [ "${name%%/*}" != "@${NAMESPACE}" ]; then
+            echo "::error title=Scope mismatch::'${name}' is not under '@${NAMESPACE}', so it would publish with no '${NAMESPACE}' namespace. package_directory ('${PACKAGE_DIRECTORY}') has to point at the directory holding the package's own package.json."
+            exit 1
+          fi
+
+          echo "Publishing ${name}@${VERSION} from '${PACKAGE_DIRECTORY}' to ${REGISTRY}"
           npm publish --registry "$REGISTRY"
 
           {
             echo "### npm package published"
             echo ""
+            echo "- Package: \`${name}\`"
             echo "- Version: \`${VERSION}\`"
             echo "- Repository: \`${{ inputs.codeartifact_domain }}/${{ inputs.codeartifact_repository }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

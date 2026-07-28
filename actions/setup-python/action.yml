@@ -1,0 +1,146 @@
+name: "Setup Python"
+description: "Install Python with pip caching, optionally authenticate pip against CodeArtifact, and install dependencies."
+
+inputs:
+  python-version:
+    description: "Python version to install."
+    required: false
+    default: "3.12"
+  working-directory:
+    description: "Directory holding pyproject.toml or the requirements file."
+    required: false
+    default: "."
+  install:
+    description: "Install project dependencies after setup."
+    required: false
+    default: "true"
+  requirements-file:
+    description: "Requirements file to install. Ignored when the project has a pyproject.toml or setup.py."
+    required: false
+    default: "requirements.txt"
+  extras:
+    description: "Optional dependency group installed with the project, e.g. 'dev'. Only applies to a pyproject or setup.py project."
+    required: false
+    default: ""
+  cache:
+    description: "Cache the pip download cache between runs."
+    required: false
+    default: "true"
+  codeartifact-domain:
+    description: "CodeArtifact domain. Leave empty to install from public PyPI."
+    required: false
+    default: ""
+  codeartifact-repository:
+    description: "CodeArtifact repository."
+    required: false
+    default: ""
+  codeartifact-domain-owner:
+    description: "AWS account id owning the CodeArtifact domain."
+    required: false
+    default: ""
+  codeartifact-region:
+    description: "Region of the CodeArtifact domain."
+    required: false
+    default: ""
+
+outputs:
+  index-endpoint:
+    description: "CodeArtifact pypi endpoint that was configured, or empty when installing from public PyPI."
+    value: ${{ steps.codeartifact.outputs.endpoint }}
+
+runs:
+  using: composite
+  steps:
+    # setup-python hashes `cache-dependency-path` and fails the whole job when
+    # the glob resolves to nothing, so the dependency manifest has to be located
+    # before the cache is requested rather than assumed to sit next to the code.
+    - name: Resolve dependency cache
+      id: cache
+      shell: bash
+      env:
+        CACHE_ENABLED: ${{ inputs.cache }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+      run: |
+        set -euo pipefail
+
+        manager=""
+        dependency_path=""
+
+        if [ "$CACHE_ENABLED" = "true" ]; then
+          workdir="${WORKING_DIRECTORY%/}"
+          workdir="${workdir:-.}"
+
+          # The repository root is checked last: a package directory inside a
+          # monorepo often has no manifest of its own, and the root one is the
+          # correct cache key for it.
+          for candidate in \
+            "$workdir/$REQUIREMENTS_FILE" \
+            "$workdir/pyproject.toml" \
+            "$REQUIREMENTS_FILE" \
+            "pyproject.toml"; do
+            if [ -f "$candidate" ]; then
+              manager="pip"
+              dependency_path="$candidate"
+              break
+            fi
+          done
+
+          if [ -n "$dependency_path" ]; then
+            echo "Caching pip downloads, keyed on '$dependency_path'."
+          else
+            echo "::warning title=Dependency cache disabled::No '$REQUIREMENTS_FILE' or pyproject.toml under '$workdir' or the repository root; continuing without a dependency cache."
+          fi
+        fi
+
+        {
+          echo "manager=$manager"
+          echo "dependency-path=$dependency_path"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        # Empty disables caching. Anything else has to name a package manager
+        # setup-python recognises -- 'true' is rejected as unsupported.
+        cache: ${{ steps.cache.outputs.manager }}
+        cache-dependency-path: ${{ steps.cache.outputs.dependency-path }}
+
+    - name: Authenticate pip against CodeArtifact
+      id: codeartifact
+      if: inputs.codeartifact-domain != ''
+      uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@development
+      with:
+        tool: pip
+        domain: ${{ inputs.codeartifact-domain }}
+        repository: ${{ inputs.codeartifact-repository }}
+        domain-owner: ${{ inputs.codeartifact-domain-owner }}
+        region: ${{ inputs.codeartifact-region }}
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+        EXTRAS: ${{ inputs.extras }}
+      run: |
+        set -euo pipefail
+
+        python -m pip install --upgrade pip
+
+        # A project that declares itself is installed editable, so the build and
+        # the tests exercise the same tree. A bare requirements file is the
+        # fallback for projects that have not adopted a manifest yet.
+        if [ -f pyproject.toml ] || [ -f setup.py ]; then
+          if [ -n "$EXTRAS" ]; then
+            pip install -e ".[${EXTRAS}]"
+          else
+            pip install -e .
+          fi
+        elif [ -f "$REQUIREMENTS_FILE" ]; then
+          pip install -r "$REQUIREMENTS_FILE"
+        else
+          echo "::warning title=No dependency manifest::Neither pyproject.toml, setup.py nor '$REQUIREMENTS_FILE' was found in '$(pwd)'; skipping install."
+        fi

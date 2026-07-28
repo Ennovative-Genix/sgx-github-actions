@@ -1,7 +1,11 @@
 name: "CodeArtifact Login"
-description: "Authenticate npm against an AWS CodeArtifact repository. Requires AWS credentials to already be configured."
+description: "Authenticate a package manager against an AWS CodeArtifact repository. Requires AWS credentials to already be configured."
 
 inputs:
+  tool:
+    description: "Package manager to configure: npm, pip or twine."
+    required: false
+    default: "npm"
   domain:
     description: "CodeArtifact domain."
     required: true
@@ -30,7 +34,7 @@ outputs:
     description: "CodeArtifact authorization token. Registered as a masked secret."
     value: ${{ steps.token.outputs.token }}
   endpoint:
-    description: "npm repository endpoint URL."
+    description: "Repository endpoint URL for the requested tool."
     value: ${{ steps.token.outputs.endpoint }}
 
 runs:
@@ -40,6 +44,7 @@ runs:
       id: token
       shell: bash
       env:
+        CA_TOOL: ${{ inputs.tool }}
         CA_DOMAIN: ${{ inputs.domain }}
         CA_REPOSITORY: ${{ inputs.repository }}
         CA_DOMAIN_OWNER: ${{ inputs.domain-owner }}
@@ -62,40 +67,79 @@ runs:
         echo "::add-mask::$token"
         echo "token=$token" >> "$GITHUB_OUTPUT"
 
+        # `format` differs per ecosystem; the endpoint shape does not.
+        case "$CA_TOOL" in
+          npm)         format=npm ;;
+          pip | twine) format=pypi ;;
+          *)
+            echo "::error title=Unsupported tool::'$CA_TOOL' is not one of npm, pip, twine."
+            exit 1
+            ;;
+        esac
+
         endpoint="$(aws codeartifact get-repository-endpoint \
           "${args[@]}" \
           --repository "$CA_REPOSITORY" \
-          --format npm \
+          --format "$format" \
           --query repositoryEndpoint \
           --output text)"
 
         echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
-        echo "Resolved npm endpoint: $endpoint"
+        echo "Resolved $CA_TOOL endpoint: $endpoint"
 
-    - name: Configure npm
+    - name: Configure package manager
       shell: bash
       env:
+        CA_TOOL: ${{ inputs.tool }}
         CA_NAMESPACE: ${{ inputs.namespace }}
         CA_TOKEN: ${{ steps.token.outputs.token }}
         CA_ENDPOINT: ${{ steps.token.outputs.endpoint }}
       run: |
         set -euo pipefail
 
-        # npm wants the auth key without the protocol, and the registry with it.
+        # Every tool wants a different slice of the same URL. The endpoint keeps
+        # its trailing slash, which is what pip's `simple/` suffix appends to.
         host_path="${CA_ENDPOINT#https://}"
 
-        if [ -n "$CA_NAMESPACE" ]; then
-          npm config set "@${CA_NAMESPACE}:registry" "$CA_ENDPOINT"
-        else
-          npm config set registry "$CA_ENDPOINT"
-        fi
-        npm config set "//${host_path}:_authToken" "$CA_TOKEN"
+        case "$CA_TOOL" in
+          npm)
+            if [ -n "$CA_NAMESPACE" ]; then
+              npm config set "@${CA_NAMESPACE}:registry" "$CA_ENDPOINT"
+            else
+              npm config set registry "$CA_ENDPOINT"
+            fi
+            npm config set "//${host_path}:_authToken" "$CA_TOKEN"
 
-        # A repository-level .npmrc overrides the user-level one written above,
-        # and the shape AWS documents refers to the token by name. Exporting it
-        # keeps that idiom working.
-        {
-          echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
-          echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
-        } >> "$GITHUB_ENV"
-        echo "npm configured against CodeArtifact."
+            # A repository-level .npmrc overrides the user-level one written
+            # above, and the shape AWS documents refers to the token by name.
+            # Exporting it keeps that idiom working.
+            {
+              echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
+              echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
+            } >> "$GITHUB_ENV"
+            echo "npm configured against CodeArtifact."
+            ;;
+
+          pip)
+            # The token lands in pip.conf rather than the environment because
+            # pip has no equivalent of npm's _authToken indirection.
+            pip config set global.index-url "https://aws:${CA_TOKEN}@${host_path}simple/"
+
+            {
+              echo "CODEARTIFACT_AUTH_TOKEN=${CA_TOKEN}"
+              echo "CODEARTIFACT_URL=${CA_ENDPOINT}"
+            } >> "$GITHUB_ENV"
+            echo "pip configured against CodeArtifact."
+            ;;
+
+          twine)
+            # twine reads all three from the environment, so nothing has to be
+            # written to ~/.pypirc.
+            {
+              echo "TWINE_USERNAME=aws"
+              echo "TWINE_PASSWORD=${CA_TOKEN}"
+              echo "TWINE_REPOSITORY_URL=${CA_ENDPOINT}"
+            } >> "$GITHUB_ENV"
+            echo "twine configured against CodeArtifact."
+            ;;
+        esac

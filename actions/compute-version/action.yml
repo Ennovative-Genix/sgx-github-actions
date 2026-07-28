@@ -36,6 +36,8 @@ runs:
         read_manifest_version() {
           if [ -f package.json ]; then
             node -e "process.stdout.write(require('./package.json').version || '')" 2>/dev/null || true
+          elif [ -f pyproject.toml ]; then
+            python3 "$GITHUB_ACTION_PATH/read-pyproject-version.py" 2>/dev/null || true
           fi
         }
 
