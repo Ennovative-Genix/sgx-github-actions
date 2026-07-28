@@ -41,8 +41,8 @@ runs:
 
         version="$(read_manifest_version)"
         if [ -z "$version" ]; then
-            echo "::warning title=No version::Could not read a version from package.json; defaulting to 0.0.0."
-            manifest_version="0.0.0"
+          echo "::warning title=No version::Could not read a version from package.json; defaulting to 0.0.0."
+          version="0.0.0"
         fi
 
         {

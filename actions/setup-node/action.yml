@@ -47,12 +47,60 @@ outputs:
 runs:
   using: composite
   steps:
+    # setup-node hashes `cache-dependency-path` and fails the whole job when the
+    # glob resolves to nothing, so the lockfile has to be located before the
+    # cache is requested rather than assumed to sit next to package.json.
+    - name: Resolve dependency cache
+      id: cache
+      shell: bash
+      env:
+        CACHE_ENABLED: ${{ inputs.cache }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        manager=""
+        lockfile=""
+
+        if [ "$CACHE_ENABLED" = "true" ]; then
+          workdir="${WORKING_DIRECTORY%/}"
+          workdir="${workdir:-.}"
+
+          # The repository root is checked last: in an npm workspace the package
+          # directory has no lockfile of its own, and the root one is the correct
+          # cache key for it.
+          for candidate in \
+            "$workdir/package-lock.json" \
+            "$workdir/npm-shrinkwrap.json" \
+            "package-lock.json" \
+            "npm-shrinkwrap.json"; do
+            if [ -f "$candidate" ]; then
+              manager="npm"
+              lockfile="$candidate"
+              break
+            fi
+          done
+
+          if [ -n "$lockfile" ]; then
+            echo "Caching npm downloads, keyed on '$lockfile'."
+          else
+            echo "::warning title=Dependency cache disabled::No package-lock.json or npm-shrinkwrap.json under '$workdir' or the repository root; continuing without a dependency cache."
+          fi
+        fi
+
+        {
+          echo "manager=$manager"
+          echo "lockfile=$lockfile"
+        } >> "$GITHUB_OUTPUT"
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: ${{ inputs.node-version }}
-        cache: ${{ inputs.cache == 'true' || '' }}
-        cache-dependency-path: ${{ inputs.cache == 'true' && format('{0}/{1}', inputs.working-directory, 'package-lock.json') || '' }}
+        # Empty disables caching. Anything else has to name a package manager
+        # setup-node recognises -- 'true' is rejected as unsupported.
+        cache: ${{ steps.cache.outputs.manager }}
+        cache-dependency-path: ${{ steps.cache.outputs.lockfile }}
 
     - name: Authenticate npm against CodeArtifact
       id: codeartifact
@@ -72,10 +120,11 @@ runs:
       run: |
         set -euo pipefail
 
-        if [ -f package-lock.json ]; then
-            npm ci
-          else
-            echo "::warning title=No lockfile::package-lock.json is missing; falling back to 'npm install'."
-            npm install
-          fi
-        ;;
+        # `npm ci` requires a lockfile that agrees with package.json. Fall back
+        # rather than fail so a repository mid-migration still builds.
+        if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+          npm ci
+        else
+          echo "::warning title=No lockfile::No package-lock.json in '$(pwd)'; falling back to 'npm install'."
+          npm install
+        fi

@@ -73,6 +73,10 @@ jobs:
   build:
     name: Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    # Binds the approval rules and the environment-scoped AWS_REGION variable
+    # that aws-oidc-auth falls back to.
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 30
 
     strategy:
       matrix:
@@ -121,6 +125,7 @@ jobs:
         run: npm run ${{ inputs.test_script }} --if-present
 
       - name: Build
+        if: inputs.build_script != ''
         working-directory: ${{ inputs.app_path }}
         run: npm run ${{ inputs.build_script }}
 
@@ -139,6 +144,11 @@ jobs:
           REGISTRY: ${{ steps.node.outputs.registry-endpoint }}
         run: |
           set -euo pipefail
+
+          if [ -z "$REGISTRY" ]; then
+            echo "::error title=No registry::CodeArtifact login produced no endpoint; refusing to publish to the default registry."
+            exit 1
+          fi
 
           npm publish --registry "$REGISTRY"
 
