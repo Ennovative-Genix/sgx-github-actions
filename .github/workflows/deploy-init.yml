@@ -42,6 +42,11 @@ on:
         required: false
         type: string
         default: ""
+      codeartifact_region:
+        description: "Region the CodeArtifact domain lives in — where the domain is, not where this deploys."
+        required: false
+        type: string
+        default: "ap-south-1"
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -74,8 +79,10 @@ jobs:
       docker_image_name: ${{ inputs.docker_image_name }}
       s3_path: ${{ inputs.s3_path }}
       app_path: ${{ inputs.app_path }}
+      is_ui_app: ${{ inputs.is_ui_app }}
       codeartifact_domain: ${{ inputs.codeartifact_domain }}
       codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ inputs.codeartifact_region }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
@@ -91,6 +98,7 @@ jobs:
       app_path: ${{ inputs.app_path }}
       codeartifact_domain: ${{ inputs.codeartifact_domain }}
       codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ inputs.codeartifact_region }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 

@@ -146,8 +146,8 @@ Usable directly from any job:
 
 `npm ci` inside a `docker build` runs in a container with no AWS credentials, so
 a private CodeArtifact registry fails there even when the runner is authenticated.
-Set `codeartifact_domain` and `codeartifact_repository` on `deploy-init.yml` and
-the build mints a token before the image is built and hands it to BuildKit:
+Set `codeartifact_domain` on `deploy-init.yml` and the build mints a token before
+the image is built and hands it to BuildKit:
 
 ```yaml
 jobs:
@@ -158,8 +158,7 @@ jobs:
       docker_image_name: my-api
       s3_path: my-api/dev
       codeartifact_domain: sgx
-      codeartifact_repository: npm-store
-      codeartifact_namespace: sgx
+      codeartifact_domain_owner: "123456789012" # optional, defaults to the calling account
       codeartifact_region: us-east-1 # where the domain lives, not where you deploy
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
@@ -169,36 +168,36 @@ jobs:
 Leaving `codeartifact_domain` empty skips the whole thing, so existing callers
 build exactly as before.
 
-The build then reaches the `Dockerfile` as:
+The build then reaches the `Dockerfile` as one BuildKit secret, exposed under two
+ids so either naming convention works:
 
-| Name                     | Passed as       | Holds                                                                                           |
-| ------------------------ | --------------- | ----------------------------------------------------------------------------------------------- |
-| `codeartifact`           | BuildKit secret | The authorization token, at `/run/secrets/codeartifact`                                         |
-| `CODEARTIFACT_URL`       | Build arg       | Registry endpoint, e.g. `https://sgx-123.d.codeartifact.us-east-1.amazonaws.com/npm/npm-store/` |
-| `CODEARTIFACT_NAMESPACE` | Build arg       | The npm scope, without the leading `@`                                                          |
+| Name                  | Passed as       | Holds                                                       |
+| --------------------- | --------------- | ----------------------------------------------------------- |
+| `codeartifact`        | BuildKit secret | The authorization token, at `/run/secrets/codeartifact`     |
+| `codeartifact_token`  | BuildKit secret | The same token, at `/run/secrets/codeartifact_token`        |
+
+The registry endpoint and scope are **not** passed — the `Dockerfile` and the
+repository's own `.npmrc` own those. Only the token comes from the workflow.
 
 The token is a **secret mount, not a build arg**, because build args are recorded
 in the image history — and this image is pushed to S3 and unpacked on EC2, where
-`docker history` would read it straight back. The `Dockerfile` writes the
-`.npmrc` and deletes it inside a single `RUN`, so it never reaches a layer:
+`docker history` would read it straight back. Read it inside the `RUN` that needs
+it so it never reaches a layer:
 
 ```dockerfile
 # syntax=docker/dockerfile:1.7
-FROM node:24-alpine AS build
-
-ARG CODEARTIFACT_URL
-ARG CODEARTIFACT_NAMESPACE
+FROM node:24-slim AS build
 
 WORKDIR /app
-COPY package*.json ./
+COPY package*.json .npmrc ./
 
-RUN --mount=type=secret,id=codeartifact \
-    printf '@%s:registry=%s\n//%s:_authToken=%s\nalways-auth=true\n' \
-      "$CODEARTIFACT_NAMESPACE" "$CODEARTIFACT_URL" \
-      "${CODEARTIFACT_URL#https://}" "$(cat /run/secrets/codeartifact)" > .npmrc \
- && npm ci \
- && rm -f .npmrc
+RUN --mount=type=secret,id=codeartifact,required=true \
+    CODEARTIFACT_AUTH_TOKEN="$(cat /run/secrets/codeartifact)" npm ci
 ```
+
+Prefer `required=true`. With `required=false` a missing secret produces an empty
+token and the build dies later at `npm ci` with an opaque `E401`, rather than
+saying the secret never arrived.
 
 The IAM role in `IAM_ROLE_ARN` needs `codeartifact:GetAuthorizationToken`,
 `codeartifact:GetRepositoryEndpoint`, `codeartifact:ReadFromRepository` and

@@ -75,6 +75,7 @@ jobs:
           role-session-name: GitHubActions-Build-CodeArtifact-${{ github.run_id }}
 
       - name: CodeArtifact token generation
+        id: codeartifact
         if: inputs.codeartifact_domain != ''
         uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
         with:
@@ -85,13 +86,20 @@ jobs:
         working-directory: ${{ env.APP_PATH }}
         env:
           IMAGE_NAME: ${{ inputs.docker_image_name }}
+          # Empty when the token step was skipped, which is what disables the
+          # secret below.
+          CODEARTIFACT_AUTH_TOKEN: ${{ steps.codeartifact.outputs.token }}
         run: |
           set -euo pipefail
 
           args=(--build-arg "ENV=${TARGET_ENV}" -f Dockerfile -t "${IMAGE_NAME}:latest")
 
           if [ -n "${CODEARTIFACT_AUTH_TOKEN:-}" ]; then
+            # One token under both ids: Dockerfiles across the fleet mount it as
+            # either `codeartifact` or `codeartifact_token`, and BuildKit ignores
+            # a secret the build never reads.
             args+=(--secret "id=codeartifact,env=CODEARTIFACT_AUTH_TOKEN")
+            args+=(--secret "id=codeartifact_token,env=CODEARTIFACT_AUTH_TOKEN")
           fi
 
           DOCKER_BUILDKIT=1 docker build "${args[@]}" .
