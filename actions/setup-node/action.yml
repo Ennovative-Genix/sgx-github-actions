@@ -105,7 +105,7 @@ runs:
     - name: Authenticate npm against CodeArtifact
       id: codeartifact
       if: inputs.codeartifact-domain != ''
-      uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@development
+      uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
       with:
         domain: ${{ inputs.codeartifact-domain }}
         repository: ${{ inputs.codeartifact-repository }}

@@ -102,7 +102,7 @@ runner; composite actions do one task inside somebody else's job.
 ```
 Entry point   publish
 Stages        ci-node · publish-npm
-Actions       actions/aws-oidc-auth · actions/setup-node · actions/compute-version · actions/codeartifact-login
+Actions       actions/aws-oidc-auth · actions/setup-node · actions/compute-version · actions/codeartifact-token
 ```
 
 Everything below the entry point stays public and composable, for the cases
@@ -138,7 +138,7 @@ Usable directly from any job:
 | [`actions/aws-oidc-auth`](actions/aws-oidc-auth)           | Resolve the region and assume a role via OIDC. No stored keys   |
 | [`actions/setup-node`](actions/setup-node)                 | Node with npm/yarn/pnpm caching and a lockfile-faithful install |
 | [`actions/compute-version`](actions/compute-version)       | One version per run, from tag, manifest or run number           |
-| [`actions/codeartifact-login`](actions/codeartifact-login) | Configure npm against CodeArtifact                              |
+| [`actions/codeartifact-token`](actions/codeartifact-token) | Configure npm against CodeArtifact                              |
 
 ---
 
@@ -171,10 +171,10 @@ build exactly as before.
 The build then reaches the `Dockerfile` as one BuildKit secret, exposed under two
 ids so either naming convention works:
 
-| Name                  | Passed as       | Holds                                                       |
-| --------------------- | --------------- | ----------------------------------------------------------- |
-| `codeartifact`        | BuildKit secret | The authorization token, at `/run/secrets/codeartifact`     |
-| `codeartifact_token`  | BuildKit secret | The same token, at `/run/secrets/codeartifact_token`        |
+| Name                 | Passed as       | Holds                                                   |
+| -------------------- | --------------- | ------------------------------------------------------- |
+| `codeartifact`       | BuildKit secret | The authorization token, at `/run/secrets/codeartifact` |
+| `codeartifact_token` | BuildKit secret | The same token, at `/run/secrets/codeartifact_token`    |
 
 The registry endpoint and scope are **not** passed — the `Dockerfile` and the
 repository's own `.npmrc` own those. Only the token comes from the workflow.

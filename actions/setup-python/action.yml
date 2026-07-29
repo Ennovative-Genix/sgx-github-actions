@@ -110,7 +110,7 @@ runs:
     - name: Authenticate pip against CodeArtifact
       id: codeartifact
       if: inputs.codeartifact-domain != ''
-      uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@development
+      uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
       with:
         tool: pip
         domain: ${{ inputs.codeartifact-domain }}
