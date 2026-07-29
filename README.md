@@ -142,6 +142,77 @@ Usable directly from any job:
 
 ---
 
+## CodeArtifact inside a Docker build
+
+`npm ci` inside a `docker build` runs in a container with no AWS credentials, so
+a private CodeArtifact registry fails there even when the runner is authenticated.
+Set `codeartifact_domain` and `codeartifact_repository` on `deploy-init.yml` and
+the build mints a token before the image is built and hands it to BuildKit:
+
+```yaml
+jobs:
+  deploy:
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy-init.yml@development
+    with:
+      environment: dev
+      docker_image_name: my-api
+      s3_path: my-api/dev
+      codeartifact_domain: sgx
+      codeartifact_repository: npm-store
+      codeartifact_namespace: sgx
+      codeartifact_region: us-east-1 # where the domain lives, not where you deploy
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+```
+
+Leaving `codeartifact_domain` empty skips the whole thing, so existing callers
+build exactly as before.
+
+The build then reaches the `Dockerfile` as:
+
+| Name                     | Passed as        | Holds                                                    |
+| ------------------------ | ---------------- | -------------------------------------------------------- |
+| `codeartifact`           | BuildKit secret  | The authorization token, at `/run/secrets/codeartifact`  |
+| `CODEARTIFACT_URL`       | Build arg        | Registry endpoint, e.g. `https://sgx-123.d.codeartifact.us-east-1.amazonaws.com/npm/npm-store/` |
+| `CODEARTIFACT_NAMESPACE` | Build arg        | The npm scope, without the leading `@`                   |
+
+The token is a **secret mount, not a build arg**, because build args are recorded
+in the image history — and this image is pushed to S3 and unpacked on EC2, where
+`docker history` would read it straight back. The `Dockerfile` writes the
+`.npmrc` and deletes it inside a single `RUN`, so it never reaches a layer:
+
+```dockerfile
+# syntax=docker/dockerfile:1.7
+FROM node:24-alpine AS build
+
+ARG CODEARTIFACT_URL
+ARG CODEARTIFACT_NAMESPACE
+
+WORKDIR /app
+COPY package*.json ./
+
+RUN --mount=type=secret,id=codeartifact \
+    printf '@%s:registry=%s\n//%s:_authToken=%s\nalways-auth=true\n' \
+      "$CODEARTIFACT_NAMESPACE" "$CODEARTIFACT_URL" \
+      "${CODEARTIFACT_URL#https://}" "$(cat /run/secrets/codeartifact)" > .npmrc \
+ && npm ci \
+ && rm -f .npmrc
+```
+
+`ARG` is scoped to one stage: repeat both lines in every stage that installs.
+
+For a `Dockerfile` that cannot be changed, `codeartifact_token_as_build_arg: true`
+additionally passes `CODEARTIFACT_AUTH_TOKEN` as a build arg. It logs a warning
+and leaves the token in the image history until it expires — an escape hatch, not
+the default.
+
+The IAM role in `IAM_ROLE_ARN` needs `codeartifact:GetAuthorizationToken`,
+`codeartifact:GetRepositoryEndpoint`, `codeartifact:ReadFromRepository` and
+`sts:GetServiceBearerToken`.
+
+---
+
 ## Configuration
 
 Set per GitHub Environment, not per repository — that is what makes `dev` and

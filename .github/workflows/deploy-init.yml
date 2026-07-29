@@ -32,6 +32,21 @@ on:
         required: false
         type: boolean
         default: false
+      codeartifact_domain:
+        description: "CodeArtifact domain to authenticate against, so package installs inside the Docker build can reach it. Empty disables CodeArtifact auth entirely."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "AWS account id owning the CodeArtifact domain. Defaults to the calling account."
+        required: false
+        type: string
+        default: ""
+      codeartifact_token_as_build_arg:
+        description: "Also pass the token as a --build-arg for Dockerfiles that cannot use a secret mount. Off by default: build args are recorded in the image history."
+        required: false
+        type: boolean
+        default: false
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -64,6 +79,9 @@ jobs:
       docker_image_name: ${{ inputs.docker_image_name }}
       s3_path: ${{ inputs.s3_path }}
       app_path: ${{ inputs.app_path }}
+      codeartifact_domain: ${{ inputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+      codeartifact_token_as_build_arg: ${{ inputs.codeartifact_token_as_build_arg }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
@@ -77,6 +95,9 @@ jobs:
       docker_image_name: ${{ inputs.docker_image_name }}
       s3_path: ${{ inputs.s3_path }}
       app_path: ${{ inputs.app_path }}
+      codeartifact_domain: ${{ inputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
+      codeartifact_token_as_build_arg: ${{ inputs.codeartifact_token_as_build_arg }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 

@@ -28,6 +28,21 @@ on:
         required: false
         type: boolean
         default: false
+      codeartifact_domain:
+        description: "CodeArtifact domain to authenticate against, so package installs inside the Docker build can reach it. Empty disables CodeArtifact auth entirely."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "AWS account id owning the CodeArtifact domain. Defaults to the calling account."
+        required: false
+        type: string
+        default: ""
+      codeartifact_region:
+        description: "Region the CodeArtifact domain lives in. Defaults to the region this build deploys to, which is only right when the domain is replicated per region."
+        required: false
+        type: string
+        default: "ap-south-1"
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -56,19 +71,37 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Docker build client
-        if: ${{ inputs.is_ui_app == true  }}
-        working-directory: ${{ env.APP_PATH }}
-        run: |
-          docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile.client -t ${{ inputs.docker_image_name }}:latest .
-          echo "Docker image ${{ inputs.docker_image_name }}:latest built"
+      - name: Configure AWS Credentials for CodeArtifact (OIDC)
+        if: inputs.codeartifact_domain != ''
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          aws-region: ${{ inputs.codeartifact_region != '' && inputs.codeartifact_region || env.AWS_REGION }}
+          role-session-name: GitHubActions-Build-CodeArtifact-${{ github.run_id }}
 
-      - name: Docker build server
-        if: ${{ inputs.is_ui_app == false }}
+      - name: CodeArtifact token generation
+        if: inputs.codeartifact_domain != ''
+        uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
+        with:
+          domain: ${{ inputs.codeartifact_domain }}
+          domain-owner: ${{ inputs.codeartifact_domain_owner }}
+
+      - name: Docker build ${{ inputs.is_ui_app && 'client' || 'server' }}
         working-directory: ${{ env.APP_PATH }}
+        env:
+          IMAGE_NAME: ${{ inputs.docker_image_name }}
+          DOCKERFILE: ${{ inputs.is_ui_app && 'Dockerfile.client' || 'Dockerfile.server' }}
         run: |
-          docker build --build-arg ENV=${{ env.TARGET_ENV }} -f Dockerfile.server -t ${{ inputs.docker_image_name }}:latest .
-          echo "Docker image ${{ inputs.docker_image_name }}:latest built"
+          set -euo pipefail
+
+          args=(--build-arg "ENV=${TARGET_ENV}" -f "$DOCKERFILE" -t "${IMAGE_NAME}:latest")
+
+          if [ -n "${CODEARTIFACT_AUTH_TOKEN:-}" ]; then
+            args+=(--secret "id=codeartifact,env=CODEARTIFACT_AUTH_TOKEN")
+          fi
+
+          DOCKER_BUILDKIT=1 docker build "${args[@]}" .
+          echo "Docker image ${IMAGE_NAME}:latest built from ${DOCKERFILE}"
 
       - name: Save Docker image to tarball
         run: |

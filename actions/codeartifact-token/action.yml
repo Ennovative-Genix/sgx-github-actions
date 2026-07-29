@@ -1,0 +1,51 @@
+name: "CodeArtifact Auth Token"
+description: "Request an authorization token for an AWS CodeArtifact."
+
+inputs:
+  domain:
+    description: "CodeArtifact domain."
+    required: true
+  domain-owner:
+    description: "AWS account id that owns the domain. Defaults to the calling account."
+    required: false
+    default: ""
+  duration-seconds:
+    description: "Lifetime of the authorization token."
+    required: false
+    default: "3600"
+
+outputs:
+  token:
+    description: "CodeArtifact authorization token. Registered as a masked secret."
+    value: ${{ steps.token.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Request CodeArtifact token
+      id: token
+      shell: bash
+      env:
+        CA_DOMAIN: ${{ inputs.domain }}
+        CA_DOMAIN_OWNER: ${{ inputs.domain-owner }}
+        CA_DURATION: ${{ inputs.duration-seconds }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$CA_DOMAIN" ]; then
+          echo "::error title=Incomplete CodeArtifact config::'domain' is required; got domain='$CA_DOMAIN'."
+          exit 1
+        fi
+
+        args=(--domain "$CA_DOMAIN")
+        [ -n "$CA_DOMAIN_OWNER" ] && args+=(--domain-owner "$CA_DOMAIN_OWNER")
+
+        token="$(aws codeartifact get-authorization-token \
+          "${args[@]}" \
+          --duration-seconds "$CA_DURATION" \
+          --query authorizationToken \
+          --output text)"
+
+        # Mask before the value can reach any later log line.
+        echo "::add-mask::$token"
+        echo "token=$token" >> "$GITHUB_OUTPUT"
