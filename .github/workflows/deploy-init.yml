@@ -122,6 +122,10 @@ jobs:
   start-container:
     name: Start Container on EC2
     needs: load-docker-image
+    # The runner propagates "skipped" transitively: one of the two build jobs is
+    # always skipped, and that leaks past load-docker-image even though it succeeds.
+    # An explicit status-function guard is the only way to break the chain.
+    if: ${{ !cancelled() && needs.load-docker-image.result == 'success' }}
     uses: ./.github/workflows/deploy-ec2-start-container.yml
     with:
       environment: ${{ inputs.environment }}
