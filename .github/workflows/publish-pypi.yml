@@ -187,7 +187,7 @@ jobs:
       # Deliberately last: the token is only needed for the upload, so this
       # keeps its lifetime inside the job as short as the steps allow.
       - name: Authenticate twine against CodeArtifact
-        uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-login@development
+        uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
         with:
           tool: twine
           domain: ${{ inputs.codeartifact_domain }}
@@ -201,7 +201,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${TWINE_REPOSITORY_URL:-}" ]; then
-            echo "::error title=No repository URL::CodeArtifact login produced no endpoint; refusing to publish to public PyPI."
+            echo "::error title=No repository URL::CodeArtifact token produced no endpoint; refusing to publish to public PyPI."
             exit 1
           fi
 
