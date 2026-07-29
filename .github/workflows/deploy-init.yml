@@ -42,11 +42,6 @@ on:
         required: false
         type: string
         default: ""
-      codeartifact_token_as_build_arg:
-        description: "Also pass the token as a --build-arg for Dockerfiles that cannot use a secret mount. Off by default: build args are recorded in the image history."
-        required: false
-        type: boolean
-        default: false
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication"
@@ -81,7 +76,6 @@ jobs:
       app_path: ${{ inputs.app_path }}
       codeartifact_domain: ${{ inputs.codeartifact_domain }}
       codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
-      codeartifact_token_as_build_arg: ${{ inputs.codeartifact_token_as_build_arg }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
@@ -97,7 +91,6 @@ jobs:
       app_path: ${{ inputs.app_path }}
       codeartifact_domain: ${{ inputs.codeartifact_domain }}
       codeartifact_domain_owner: ${{ inputs.codeartifact_domain_owner }}
-      codeartifact_token_as_build_arg: ${{ inputs.codeartifact_token_as_build_arg }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 

@@ -47,23 +47,23 @@ Only `codeartifact_domain` and `codeartifact_repository` are required. Set
 `aws_region` too unless every run has an environment to read it from — the CI job
 does not.
 
-| Input                       | Type    | Default      | Description                                                                                                                              |
-| --------------------------- | ------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `codeartifact_domain`       | string  | —            | **Required.** CodeArtifact domain to publish into.                                                                                       |
-| `codeartifact_repository`   | string  | —            | **Required.** CodeArtifact repository to publish into.                                                                                   |
-| `mode`                      | string  | `auto`       | `auto`, `verify`, `snapshot` or `release`. `auto` picks release on a tag, verify on a pull request, snapshot otherwise.                   |
-| `app_path`                  | string  | `.`          | Package directory, relative to the repository root.                                                                                      |
-| `run_ci`                    | boolean | `true`       | Lint, test and build before publishing.                                                                                                  |
-| `aws_region`                | string  | `""`         | Region of the CodeArtifact domain. Set this — CI jobs have no environment to read `AWS_REGION` from.                                     |
-| `codeartifact_domain_owner` | string  | `""`         | AWS account id owning the domain. Defaults to the calling account.                                                                       |
-| `codeartifact_namespace`    | string  | `""`         | npm scope bound to CodeArtifact, without the leading `@`. Empty binds the default registry.                                              |
-| `release_environment`       | string  | `prod`       | Environment used for a release. Protect this one with reviewers.                                                                         |
-| `snapshot_environment`      | string  | `dev`        | Environment used for snapshots and dry runs. Its name lands in the prerelease version, e.g. `1.4.2-dev.87`.                              |
-| `snapshot_version_strategy` | string  | `""`         | Overrides the snapshot strategy: `auto`, `manifest` or `run-number`. Empty means `auto`.                                                 |
-| `node_versions`             | string  | `'["20.x"]'` | JSON array of Node versions to test against; the first publishes.                                                                        |
-| `package_manager`           | string  | `npm`        | `npm`, `yarn` or `pnpm`.                                                                                                                 |
-| `build_script`              | string  | `build`      | Script run before publishing. Empty publishes without building.                                                                          |
-| `npm_access`                | string  | `restricted` | `restricted` or `public`. Applies to scoped packages only; npm rejects the flag on an unscoped one, so it is omitted with a log notice.  |
+| Input                       | Type    | Default      | Description                                                                                                                             |
+| --------------------------- | ------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `codeartifact_domain`       | string  | —            | **Required.** CodeArtifact domain to publish into.                                                                                      |
+| `codeartifact_repository`   | string  | —            | **Required.** CodeArtifact repository to publish into.                                                                                  |
+| `mode`                      | string  | `auto`       | `auto`, `verify`, `snapshot` or `release`. `auto` picks release on a tag, verify on a pull request, snapshot otherwise.                 |
+| `app_path`                  | string  | `.`          | Package directory, relative to the repository root.                                                                                     |
+| `run_ci`                    | boolean | `true`       | Lint, test and build before publishing.                                                                                                 |
+| `aws_region`                | string  | `""`         | Region of the CodeArtifact domain. Set this — CI jobs have no environment to read `AWS_REGION` from.                                    |
+| `codeartifact_domain_owner` | string  | `""`         | AWS account id owning the domain. Defaults to the calling account.                                                                      |
+| `codeartifact_namespace`    | string  | `""`         | npm scope bound to CodeArtifact, without the leading `@`. Empty binds the default registry.                                             |
+| `release_environment`       | string  | `prod`       | Environment used for a release. Protect this one with reviewers.                                                                        |
+| `snapshot_environment`      | string  | `dev`        | Environment used for snapshots and dry runs. Its name lands in the prerelease version, e.g. `1.4.2-dev.87`.                             |
+| `snapshot_version_strategy` | string  | `""`         | Overrides the snapshot strategy: `auto`, `manifest` or `run-number`. Empty means `auto`.                                                |
+| `node_versions`             | string  | `'["20.x"]'` | JSON array of Node versions to test against; the first publishes.                                                                       |
+| `package_manager`           | string  | `npm`        | `npm`, `yarn` or `pnpm`.                                                                                                                |
+| `build_script`              | string  | `build`      | Script run before publishing. Empty publishes without building.                                                                         |
+| `npm_access`                | string  | `restricted` | `restricted` or `public`. Applies to scoped packages only; npm rejects the flag on an unscoped one, so it is omitted with a log notice. |
 
 **Secrets**
 
@@ -73,10 +73,10 @@ does not.
 
 **Outputs**
 
-| Output    | Description                                             |
-| --------- | ------------------------------------------------------- |
-| `version` | The version published, empty when nothing was.          |
-| `mode`    | The resolved mode: `verify`, `snapshot` or `release`.   |
+| Output    | Description                                           |
+| --------- | ----------------------------------------------------- |
+| `version` | The version published, empty when nothing was.        |
+| `mode`    | The resolved mode: `verify`, `snapshot` or `release`. |
 
 </details>
 
@@ -87,12 +87,12 @@ does not.
 The resolved strategy on `publish.yml`, and the `version_strategy` input on
 `publish-npm.yml`:
 
-| Value        | Version                                                       | Use for            |
-| ------------ | ------------------------------------------------------------- | ------------------ |
-| `tag`        | The git tag, minus the leading `v`                            | Releases           |
-| `auto`       | The tag when there is one, otherwise `<manifest>-<env>.<run>` | The default        |
+| Value        | Version                                                       | Use for                |
+| ------------ | ------------------------------------------------------------- | ---------------------- |
+| `tag`        | The git tag, minus the leading `v`                            | Releases               |
+| `auto`       | The tag when there is one, otherwise `<manifest>-<env>.<run>` | The default            |
 | `manifest`   | Exactly what `package.json` declares                          | Manual version control |
-| `run-number` | `0.0.<run>`                                                   | Throwaway dry runs |
+| `run-number` | `0.0.<run>`                                                   | Throwaway dry runs     |
 
 ## Structure
 
@@ -133,12 +133,12 @@ Usable directly from any job:
     fallback-region: ${{ vars.AWS_REGION }}
 ```
 
-| Action                                                     | Does                                                          |
-| ---------------------------------------------------------- | ------------------------------------------------------------- |
-| [`actions/aws-oidc-auth`](actions/aws-oidc-auth)           | Resolve the region and assume a role via OIDC. No stored keys |
+| Action                                                     | Does                                                            |
+| ---------------------------------------------------------- | --------------------------------------------------------------- |
+| [`actions/aws-oidc-auth`](actions/aws-oidc-auth)           | Resolve the region and assume a role via OIDC. No stored keys   |
 | [`actions/setup-node`](actions/setup-node)                 | Node with npm/yarn/pnpm caching and a lockfile-faithful install |
-| [`actions/compute-version`](actions/compute-version)       | One version per run, from tag, manifest or run number         |
-| [`actions/codeartifact-login`](actions/codeartifact-login) | Configure npm against CodeArtifact                            |
+| [`actions/compute-version`](actions/compute-version)       | One version per run, from tag, manifest or run number           |
+| [`actions/codeartifact-login`](actions/codeartifact-login) | Configure npm against CodeArtifact                              |
 
 ---
 
@@ -171,11 +171,11 @@ build exactly as before.
 
 The build then reaches the `Dockerfile` as:
 
-| Name                     | Passed as        | Holds                                                    |
-| ------------------------ | ---------------- | -------------------------------------------------------- |
-| `codeartifact`           | BuildKit secret  | The authorization token, at `/run/secrets/codeartifact`  |
-| `CODEARTIFACT_URL`       | Build arg        | Registry endpoint, e.g. `https://sgx-123.d.codeartifact.us-east-1.amazonaws.com/npm/npm-store/` |
-| `CODEARTIFACT_NAMESPACE` | Build arg        | The npm scope, without the leading `@`                   |
+| Name                     | Passed as       | Holds                                                                                           |
+| ------------------------ | --------------- | ----------------------------------------------------------------------------------------------- |
+| `codeartifact`           | BuildKit secret | The authorization token, at `/run/secrets/codeartifact`                                         |
+| `CODEARTIFACT_URL`       | Build arg       | Registry endpoint, e.g. `https://sgx-123.d.codeartifact.us-east-1.amazonaws.com/npm/npm-store/` |
+| `CODEARTIFACT_NAMESPACE` | Build arg       | The npm scope, without the leading `@`                                                          |
 
 The token is a **secret mount, not a build arg**, because build args are recorded
 in the image history — and this image is pushed to S3 and unpacked on EC2, where
@@ -200,13 +200,6 @@ RUN --mount=type=secret,id=codeartifact \
  && rm -f .npmrc
 ```
 
-`ARG` is scoped to one stage: repeat both lines in every stage that installs.
-
-For a `Dockerfile` that cannot be changed, `codeartifact_token_as_build_arg: true`
-additionally passes `CODEARTIFACT_AUTH_TOKEN` as a build arg. It logs a warning
-and leaves the token in the image history until it expires — an escape hatch, not
-the default.
-
 The IAM role in `IAM_ROLE_ARN` needs `codeartifact:GetAuthorizationToken`,
 `codeartifact:GetRepositoryEndpoint`, `codeartifact:ReadFromRepository` and
 `sts:GetServiceBearerToken`.
@@ -218,9 +211,9 @@ The IAM role in `IAM_ROLE_ARN` needs `codeartifact:GetAuthorizationToken`,
 Set per GitHub Environment, not per repository — that is what makes `dev` and
 `prod` differ without any branching in the workflow.
 
-| Variable     | Needed for                                                                             |
-| ------------ | -------------------------------------------------------------------------------------- |
-| `AWS_REGION` | The publish job. The CI job has no environment, so pass `aws_region` for that one       |
+| Variable     | Needed for                                                                        |
+| ------------ | --------------------------------------------------------------------------------- |
+| `AWS_REGION` | The publish job. The CI job has no environment, so pass `aws_region` for that one |
 
 | Secret         | Needed for |
 | -------------- | ---------- |
