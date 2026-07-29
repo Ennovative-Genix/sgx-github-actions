@@ -108,10 +108,7 @@ runs:
       uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
       with:
         domain: ${{ inputs.codeartifact-domain }}
-        repository: ${{ inputs.codeartifact-repository }}
         domain-owner: ${{ inputs.codeartifact-domain-owner }}
-        region: ${{ inputs.codeartifact-region }}
-        namespace: ${{ inputs.codeartifact-namespace }}
 
     - name: Install dependencies
       if: inputs.install == 'true'

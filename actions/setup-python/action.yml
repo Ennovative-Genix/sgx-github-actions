@@ -112,11 +112,8 @@ runs:
       if: inputs.codeartifact-domain != ''
       uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
       with:
-        tool: pip
         domain: ${{ inputs.codeartifact-domain }}
-        repository: ${{ inputs.codeartifact-repository }}
         domain-owner: ${{ inputs.codeartifact-domain-owner }}
-        region: ${{ inputs.codeartifact-region }}
 
     - name: Install dependencies
       if: inputs.install == 'true'
