@@ -107,6 +107,9 @@ jobs:
     needs:
       - build-and-upload-nx
       - build-and-upload
+    # Only one of the two build jobs ever runs; the other is skipped. Without this
+    # guard the skipped dependency would skip this job too.
+    if: ${{ !cancelled() && (needs.build-and-upload-nx.result == 'success' || needs.build-and-upload.result == 'success') }}
     uses: ./.github/workflows/deploy-ec2-load-docker.yml
     with:
       environment: ${{ inputs.environment }}
