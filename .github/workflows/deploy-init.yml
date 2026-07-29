@@ -132,6 +132,7 @@ jobs:
       docker_image_name: ${{ inputs.docker_image_name }}
       is_ui_app: ${{ inputs.is_ui_app }}
       app_path: ${{ inputs.app_path }}
+      is_nx_app: ${{ inputs.is_nx_app }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
