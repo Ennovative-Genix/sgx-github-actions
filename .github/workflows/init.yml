@@ -6,7 +6,7 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (dev, qa, uat, stg, preprod, prod)"
+        description: "Target environment (dev, qa, uat, stg, staging, preprod, prod)"
         required: true
         type: string
       env_region:
@@ -62,6 +62,21 @@ on:
         required: false
         type: string
         default: ""
+      codeartifact_domain:
+        description: "Optional CodeArtifact domain (e.g. sgx). When set with owner+region, CI mints a token and passes it to Docker as BuildKit secret codeartifact_token."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "AWS account ID that owns the CodeArtifact domain."
+        required: false
+        type: string
+        default: ""
+      codeartifact_region:
+        description: "Region of the CodeArtifact domain (e.g. ap-south-1)."
+        required: false
+        type: string
+        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
@@ -101,6 +116,9 @@ jobs:
       namespace: ${{ steps.normalize.outputs.namespace }}
       aws_secret_arn: ${{ steps.normalize.outputs.aws_secret_arn }}
       k8s_secret_name: ${{ steps.normalize.outputs.k8s_secret_name }}
+      codeartifact_domain: ${{ steps.normalize.outputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ steps.normalize.outputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ steps.normalize.outputs.codeartifact_region }}
     steps:
       - name: Normalize and validate inputs
         id: normalize
@@ -117,6 +135,9 @@ jobs:
           NAMESPACE: ${{ inputs.namespace }}
           AWS_SECRET_ARN: ${{ inputs.aws_secret_arn }}
           K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
+          CODEARTIFACT_DOMAIN: ${{ inputs.codeartifact_domain }}
+          CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact_domain_owner }}
+          CODEARTIFACT_REGION: ${{ inputs.codeartifact_region }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -137,10 +158,13 @@ jobs:
           NAMESPACE="$(trim "$NAMESPACE")"
           AWS_SECRET_ARN="$(trim "$AWS_SECRET_ARN")"
           K8S_SECRET_NAME="$(trim "$K8S_SECRET_NAME")"
+          CODEARTIFACT_DOMAIN="$(trim "$CODEARTIFACT_DOMAIN")"
+          CODEARTIFACT_DOMAIN_OWNER="$(trim "$CODEARTIFACT_DOMAIN_OWNER")"
+          CODEARTIFACT_REGION="$(trim "$CODEARTIFACT_REGION")"
 
           case "$ENVIRONMENT" in
-            dev|qa|uat|stg|preprod|prod) ;;
-            *) fail "environment must be one of dev|qa|uat|stg|preprod|prod (got '$ENVIRONMENT')" ;;
+            dev|qa|uat|stg|staging|preprod|prod) ;;
+            *) fail "environment must be one of dev|qa|uat|stg|staging|preprod|prod (got '$ENVIRONMENT')" ;;
           esac
 
           printf '%s' "$DOCKER_IMAGE_NAME" | grep -Eq '^[a-z0-9][a-z0-9._/-]*$' \
@@ -159,6 +183,14 @@ jobs:
             printf '%s' "$K8S_SECRET_NAME" | grep -Eq '^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$' \
               || fail "k8s_secret_name must be a valid DNS subdomain label (got '$K8S_SECRET_NAME')"
           fi
+          # CodeArtifact trio is all-or-nothing.
+          CA_SET=0
+          [ -n "$CODEARTIFACT_DOMAIN" ] && CA_SET=$((CA_SET + 1))
+          [ -n "$CODEARTIFACT_DOMAIN_OWNER" ] && CA_SET=$((CA_SET + 1))
+          [ -n "$CODEARTIFACT_REGION" ] && CA_SET=$((CA_SET + 1))
+          if [ "$CA_SET" -ne 0 ] && [ "$CA_SET" -ne 3 ]; then
+            fail "codeartifact_domain, codeartifact_domain_owner, and codeartifact_region must all be set together"
+          fi
 
           {
             echo "environment=$ENVIRONMENT"
@@ -173,6 +205,9 @@ jobs:
             echo "namespace=$NAMESPACE"
             echo "aws_secret_arn=$AWS_SECRET_ARN"
             echo "k8s_secret_name=$K8S_SECRET_NAME"
+            echo "codeartifact_domain=$CODEARTIFACT_DOMAIN"
+            echo "codeartifact_domain_owner=$CODEARTIFACT_DOMAIN_OWNER"
+            echo "codeartifact_region=$CODEARTIFACT_REGION"
           } >> "$GITHUB_OUTPUT"
 
           echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
@@ -188,6 +223,9 @@ jobs:
       app_path: ${{ needs.validate-inputs.outputs.app_path }}
       docker_context: ${{ needs.validate-inputs.outputs.docker_context }}
       ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
+      codeartifact_domain: ${{ needs.validate-inputs.outputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ needs.validate-inputs.outputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ needs.validate-inputs.outputs.codeartifact_region }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
