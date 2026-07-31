@@ -28,21 +28,6 @@ on:
         required: false
         type: string
         default: ""
-      codeartifact_domain:
-        description: "Optional CodeArtifact domain (e.g. sgx). When set, CI mints a token for Docker BuildKit secret codeartifact_token."
-        required: false
-        type: string
-        default: ""
-      codeartifact_domain_owner:
-        description: "AWS account ID that owns the CodeArtifact domain."
-        required: false
-        type: string
-        default: ""
-      codeartifact_region:
-        description: "Region of the CodeArtifact domain (e.g. ap-south-1)."
-        required: false
-        type: string
-        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs ECR push)"
@@ -132,25 +117,6 @@ jobs:
           echo "file=${APP_PATH}/Dockerfile" >> "$GITHUB_OUTPUT"
           echo "Docker context='${CONTEXT}' file='${APP_PATH}/Dockerfile'"
 
-      - name: Mint CodeArtifact token
-        id: ca
-        if: ${{ inputs.codeartifact_domain != '' }}
-        env:
-          CA_DOMAIN: ${{ inputs.codeartifact_domain }}
-          CA_OWNER: ${{ inputs.codeartifact_domain_owner }}
-          CA_REGION: ${{ inputs.codeartifact_region }}
-        run: |
-          set -euo pipefail
-          TOKEN="$(aws codeartifact get-authorization-token \
-            --domain "$CA_DOMAIN" \
-            --domain-owner "$CA_OWNER" \
-            --region "$CA_REGION" \
-            --query authorizationToken \
-            --output text)"
-          echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-          echo "Minted CodeArtifact token for domain=${CA_DOMAIN} (region=${CA_REGION})"
-
       - name: Build and push image
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -161,10 +127,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             ENV=${{ inputs.environment }}
-          # Optional BuildKit secret for Dockerfiles that mount id=codeartifact_token
-          # (e.g. sentriom-orchestrator). Empty when CodeArtifact inputs are omitted.
-          secrets: |
-            codeartifact_token=${{ steps.ca.outputs.token }}
           # Single-platform, no provenance attestation → one clean manifest digest.
           provenance: false
           cache-from: type=gha,scope=${{ inputs.docker_image_name }}
