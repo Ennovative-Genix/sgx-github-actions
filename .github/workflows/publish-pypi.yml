@@ -21,11 +21,6 @@ on:
         description: "CodeArtifact repository to publish into."
         required: true
         type: string
-      codeartifact_domain_owner:
-        description: "AWS account id owning the CodeArtifact domain."
-        required: false
-        type: string
-        default: ""
       aws_region:
         description: "Region of the CodeArtifact domain. Required, because CI jobs have no environment to read AWS_REGION from."
         required: false
@@ -107,7 +102,7 @@ jobs:
           extras: ${{ inputs.extras }}
           codeartifact-domain: ${{ inputs.codeartifact_domain }}
           codeartifact-repository: ${{ inputs.codeartifact_repository }}
-          codeartifact-domain-owner: ${{ inputs.codeartifact_domain_owner }}
+          codeartifact-domain-owner: ${{ steps.aws.outputs.account-id }}
           codeartifact-region: ${{ steps.aws.outputs.region }}
 
       - name: Compute version
@@ -192,7 +187,7 @@ jobs:
           tool: twine
           domain: ${{ inputs.codeartifact_domain }}
           repository: ${{ inputs.codeartifact_repository }}
-          domain-owner: ${{ inputs.codeartifact_domain_owner }}
+          domain-owner: ${{ steps.aws.outputs.account-id }}
           region: ${{ steps.aws.outputs.region }}
 
       - name: Publish

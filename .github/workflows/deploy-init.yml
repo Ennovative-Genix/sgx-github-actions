@@ -66,8 +66,6 @@ jobs:
         run: |
           sudo rm -rf /usr/local/lib/android        # ~12 GB  Android SDK + NDK
           sudo rm -rf /usr/local/.ghcup /opt/ghc    # ~6 GB   Haskell (GHC, cabal, stack)
-          sudo rm -rf /usr/share/swift              # ~2 GB   Swift toolchain
-          sudo rm -rf /usr/lib/jvm                  # ~2 GB   Preinstalled JDKs
 
   build-and-upload-nx:
     name: Build NX and Upload to S3

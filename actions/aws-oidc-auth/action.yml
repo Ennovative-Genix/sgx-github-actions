@@ -17,10 +17,6 @@ inputs:
     description: "Short label folded into the STS session name. Keep it under 20 characters."
     required: false
     default: "generic"
-  mask-account-id:
-    description: "Mask the AWS account id in logs."
-    required: false
-    default: "true"
 
 outputs:
   region:
@@ -65,7 +61,6 @@ runs:
         role-to-assume: ${{ inputs.role-arn }}
         aws-region: ${{ steps.resolve.outputs.region }}
         role-session-name: gha-${{ inputs.session-name }}-${{ github.run_id }}
-        mask-aws-account-id: ${{ inputs.mask-account-id }}
 
     - name: Record caller identity
       id: whoami

@@ -31,21 +31,15 @@ on:
         description: "CodeArtifact repository to publish into."
         required: true
         type: string
-      codeartifact_domain_owner:
-        description: "AWS account id owning the CodeArtifact domain."
-        required: false
-        type: string
-        default: ""
       codeartifact_namespace:
         description: "npm scope bound to CodeArtifact, without the leading @."
         required: false
         type: string
         default: ""
       aws_region:
-        description: "Region of the CodeArtifact domain. Required, because CI jobs have no environment to read AWS_REGION from."
-        required: false
+        description: "AWS region where the CodeArtifact domain lives."
+        required: true
         type: string
-        default: ""
       node_version:
         description: "Node version used to publish."
         required: false
@@ -78,8 +72,6 @@ jobs:
   build:
     name: Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
-    # Binds the approval rules and the environment-scoped AWS_REGION variable
-    # that aws-oidc-auth falls back to.
     environment: ${{ inputs.environment }}
     timeout-minutes: 30
 
@@ -92,6 +84,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Configure AWS credentials
+        id: aws
         if: inputs.codeartifact_domain != ''
         uses: Ennovative-Genix/sgx-github-actions/actions/aws-oidc-auth@development
         with:
@@ -108,8 +101,8 @@ jobs:
           working-directory: ${{ inputs.app_path }}
           codeartifact-domain: ${{ inputs.codeartifact_domain }}
           codeartifact-repository: ${{ inputs.codeartifact_repository }}
-          codeartifact-domain-owner: ${{ inputs.codeartifact_domain_owner }}
-          codeartifact-region: ${{ inputs.aws_region }}
+          codeartifact-domain-owner: ${{ steps.aws.outputs.account-id }}
+          codeartifact-region: ${{ steps.aws.outputs.region }}
           codeartifact-namespace: ${{ inputs.codeartifact_namespace }}
 
       - name: Compute version
