@@ -176,13 +176,17 @@ EC2 flow does.
 | `nodejs`  | `npm run <npm_build_script>` | `npm run <npm_zip_script>` | Node + `npm ci` in `app_path` |
 | `python`  | `<build_script>`             | `<zip_script>`             | Python + `uv` (or `pip`)      |
 
-For `nodejs` the scripts default to `build` and `zip`, so a conforming project
-passes neither. Setting one to `""` skips that step — useful when the build
-script already produces the zip.
+**The zip entry point is always optional.** Leave it empty and that step is
+skipped, on the assumption that the build entry point already produced the zip.
+Only the build entry point is mandatory: `npm_build_script` defaults to `build`,
+and `build_script` is **required** when `runtime` is `python`.
 
-For `python`, `build_script` and `zip_script` are **required** and are paths
-relative to `app_path`. They run directly when executable (so a shebang'd
-`.py` works) and under `bash` otherwise:
+For `nodejs` the scripts default to `build` and `zip`, so a conforming project
+passes neither.
+
+For `python`, `build_script` and `zip_script` are paths relative to `app_path`.
+They run directly when executable (so a shebang'd `.py` works) and under `bash`
+otherwise. Both are checked for existence up front:
 
 ```yaml
 with:
@@ -191,7 +195,7 @@ with:
   runtime: python
   app_path: services/my-fn
   build_script: scripts/build.sh
-  zip_script: scripts/package.sh
+  zip_script: scripts/package.sh # omit when build.sh zips too
   python_package_manager: uv # or pip
 ```
 
@@ -240,9 +244,9 @@ aws lambda update-alias --function-name my-fn-dev --name live --function-version
 | `app_path`               | string | `.`     | Directory the entry points run in. Script paths resolve from here.                         |
 | `artifact_path`          | string | `""`    | Path to the produced zip, relative to `app_path`. Empty auto-discovers exactly one `.zip`. |
 | `npm_build_script`       | string | `build` | npm script that builds. Empty skips the build. `nodejs` only.                              |
-| `npm_zip_script`         | string | `zip`   | npm script that zips. Empty skips it. `nodejs` only.                                       |
+| `npm_zip_script`         | string | `zip`   | npm script that zips. Empty means the build script already zips. `nodejs` only.            |
 | `build_script`           | string | `""`    | Path to the build script, relative to `app_path`. **Required** when `runtime` is `python`. |
-| `zip_script`             | string | `""`    | Path to the zip script, relative to `app_path`. **Required** when `runtime` is `python`.   |
+| `zip_script`             | string | `""`    | Path to the zip script, relative to `app_path`. Empty means `build_script` already zips.   |
 | `python_package_manager` | string | `uv`    | `uv` or `pip`. Installed before `build_script` runs; the script decides how to use it.     |
 | `node_version`           | string | `24.x`  | Node version installed for the `nodejs` path.                                              |
 | `python_version`         | string | `3.12`  | Python version installed for the `python` path. Match the function's runtime.              |

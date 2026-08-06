@@ -6,6 +6,9 @@ name: Deploy - Lambda
 #
 #   nodejs  ->  npm run <npm_build_script>  then  npm run <npm_zip_script>
 #   python  ->  bash <build_script>         then  bash <zip_script>
+#
+# Either zip entry point can be left empty, for projects whose build step
+# already produces the zip.
 
 on:
   workflow_call:
@@ -48,7 +51,7 @@ on:
         type: string
         default: ""
       zip_script:
-        description: "Path to the script that produces the deployment zip, relative to app_path. Required when runtime is 'python'."
+        description: "Path to the script that produces the deployment zip, relative to app_path. Empty means build_script already zips. python only."
         required: false
         type: string
         default: ""
@@ -136,9 +139,16 @@ jobs:
             # `npm run --if-present`, so a guessed path would fail deep in the
             # build with a confusing error instead of here.
             [ -n "$BUILD_SCRIPT" ] || fail "Missing build_script" "runtime 'python' requires build_script, a path relative to app_path."
-            [ -n "$ZIP_SCRIPT" ] || fail "Missing zip_script" "runtime 'python' requires zip_script, a path relative to app_path."
 
-            for script in "$BUILD_SCRIPT" "$ZIP_SCRIPT"; do
+            # zip_script is optional: empty means build_script zips as well.
+            scripts=("$BUILD_SCRIPT")
+            if [ -n "$ZIP_SCRIPT" ]; then
+              scripts+=("$ZIP_SCRIPT")
+            else
+              echo "No zip_script; '$BUILD_SCRIPT' is expected to produce the zip itself."
+            fi
+
+            for script in "${scripts[@]}"; do
               [ -f "$APP_PATH/$script" ] || fail "Script not found" "'$script' does not exist under app_path '$APP_PATH'."
             done
 
@@ -224,8 +234,10 @@ jobs:
             fi
           fi
 
+      # Skipped when the runtime's zip entry point is empty -- the build step is
+      # then expected to have produced the zip already.
       - name: Package
-        if: (inputs.runtime == 'nodejs' && inputs.npm_zip_script != '') || inputs.runtime == 'python'
+        if: (inputs.runtime == 'nodejs' && inputs.npm_zip_script != '') || (inputs.runtime == 'python' && inputs.zip_script != '')
         working-directory: ${{ inputs.app_path }}
         env:
           RUNTIME: ${{ inputs.runtime }}
@@ -255,7 +267,7 @@ jobs:
 
           if [ -n "$ARTIFACT_PATH" ]; then
             [ -f "$ARTIFACT_PATH" ] || {
-              echo "::error title=Package not found::artifact_path '$ARTIFACT_PATH' does not exist under app_path after the zip step ran."
+              echo "::error title=Package not found::artifact_path '$ARTIFACT_PATH' does not exist under app_path once the build and zip steps have run."
               exit 1
             }
             zip_path="$ARTIFACT_PATH"
@@ -272,7 +284,7 @@ jobs:
             )
 
             if [ "${#found[@]}" -eq 0 ]; then
-              echo "::error title=No package produced::No .zip found under app_path '$(pwd)'. Check the zip step, or set artifact_path."
+              echo "::error title=No package produced::No .zip found under app_path '$(pwd)'. Check that the build or zip step writes one, or set artifact_path."
               exit 1
             fi
 
