@@ -115,11 +115,11 @@ Everything below the entry point stays public and composable, for the cases
 
 Compose these yourself when the entry point does not fit.
 
-| Workflow                                                         | Does                                                                                |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [`ci-node.yml`](.github/workflows/ci-node.yml)                   | Node.js, NestJS, Angular, React, Nx. Version matrix, `nx affected`, artifact upload |
-| [`publish-npm.yml`](.github/workflows/publish-npm.yml)           | Version, build and publish a package to CodeArtifact npm                            |
-| [`publish-pypi.yml`](.github/workflows/publish-pypi.yml)         | Version, build and publish a package to CodeArtifact PyPI                           |
+| Workflow                                                 | Does                                                                                |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`ci-node.yml`](.github/workflows/ci-node.yml)           | Node.js, NestJS, Angular, React, Nx. Version matrix, `nx affected`, artifact upload |
+| [`publish-npm.yml`](.github/workflows/publish-npm.yml)   | Version, build and publish a package to CodeArtifact npm                            |
+| [`publish-pypi.yml`](.github/workflows/publish-pypi.yml) | Version, build and publish a package to CodeArtifact PyPI                           |
 
 Library repository example: [examples/publishing/](examples/publishing/).
 
@@ -146,13 +146,13 @@ Usable directly from any job:
 ## Lambda
 
 **The project owns building and zipping.** This workflow installs the toolchain,
-runs the project's own build and zip entry points, then uploads the zip straight
-to Lambda, publishes a version and moves an alias onto it. There is no S3 hop.
+runs the project's own build and zip entry points, uploads the zip straight to
+Lambda and publishes an immutable version. There is no S3 hop.
 
 ```yaml
 jobs:
   deploy:
-    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy-lambda-init.yml@development
+    uses: Ennovative-Genix/sgx-github-actions/.github/workflows/deploy-lambda.yml@development
     permissions:
       id-token: write
       contents: read
@@ -162,7 +162,6 @@ jobs:
       runtime: nodejs
       app_path: services/my-fn
       # npm run build, then npm run zip — these are the defaults
-      alias: live
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 ```
@@ -172,10 +171,10 @@ EC2 flow does.
 
 ### Build and zip entry points
 
-| `runtime` | Build                            | Zip                            | Toolchain installed             |
-| --------- | -------------------------------- | ------------------------------ | ------------------------------- |
-| `nodejs`  | `npm run <npm_build_script>`     | `npm run <npm_zip_script>`     | Node + `npm ci` in `app_path`   |
-| `python`  | `<build_script>`                 | `<zip_script>`                 | Python + `uv` (or `pip`)        |
+| `runtime` | Build                        | Zip                        | Toolchain installed           |
+| --------- | ---------------------------- | -------------------------- | ----------------------------- |
+| `nodejs`  | `npm run <npm_build_script>` | `npm run <npm_zip_script>` | Node + `npm ci` in `app_path` |
+| `python`  | `<build_script>`             | `<zip_script>`             | Python + `uv` (or `pip`)      |
 
 For `nodejs` the scripts default to `build` and `zip`, so a conforming project
 passes neither. Setting one to `""` skips that step — useful when the build
@@ -197,13 +196,8 @@ with:
 ```
 
 `build_script` also owns installing the project's dependencies — the workflow
-only puts the interpreter and `uv` on the runner. That is why `lint_command` and
-`test_command` run **after** the build and before the zip: anything they import
-only exists once the build has run.
-
-When `codeartifact_domain` is set, `npm`, `pip` and `uv` are pointed at that
-repository before the build, so the project's own install step reaches it
-without doing any AWS work itself.
+only puts the interpreter and `uv` on the runner. Linting and testing belong in
+the project's own CI, not here; this workflow builds, zips and deploys.
 
 ### Finding the zip
 
@@ -216,49 +210,43 @@ Uploading the zip in the API request caps it at **50 MiB**. The workflow checks
 the size before calling AWS so an oversized package fails with that number
 rather than a bare `RequestEntityTooLarge`.
 
-`architecture` defaults to `""`, which leaves the function's own setting alone —
-the build already decided this. Set it only to deliberately move a function
-between `x86_64` and `arm64`.
-
 ### Versions and rollback
 
-`publish` (default `true`) publishes a numbered version only **after** the code
-update reaches `LastUpdateStatus: Successful`, so a failed update never leaves a
-version pointing at code that did not come up. `--code-sha256` makes the publish
-a compare-and-swap, so two runs racing cannot publish each other's code.
+Only the code is updated. The function's own configuration — architecture,
+memory, timeout, handler, environment variables — is left untouched, so whatever
+manages that configuration stays the single source of truth for it.
 
-`alias` then moves onto that version, and the job summary prints the exact
-`update-alias` command that puts it back. Rolling back is that one command — it
-needs no rebuild, because every version is immutable. An `alias` without
-`publish` is rejected up front rather than silently ignored.
+A numbered version is published on every run, and only **after** the code update
+reaches `LastUpdateStatus: Successful` — a failed update never leaves a version
+pointing at code that did not come up. `--code-sha256` makes the publish a
+compare-and-swap, so two runs racing cannot publish each other's code.
+
+Every version is immutable, so rolling back needs no rebuild. Take the
+`function_version` output of the run you want back and point at it directly, or
+put an alias on it:
+
+```bash
+aws lambda update-alias --function-name my-fn-dev --name live --function-version 42
+```
 
 <details>
-<summary><b><code>deploy-lambda-init.yml</code> — all inputs, secrets and outputs</b></summary>
+<summary><b><code>deploy-lambda.yml</code> — all inputs, secrets and outputs</b></summary>
 
-| Input                     | Type    | Default  | Description                                                                                          |
-| ------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------ |
-| `environment`             | string  | —        | **Required.** Target environment. Supplies `AWS_REGION`.                                             |
-| `function_name`           | string  | —        | **Required.** Name or ARN of the function to update.                                                 |
-| `runtime`                 | string  | —        | **Required.** `nodejs` or `python`.                                                                  |
-| `app_path`                | string  | `.`      | Directory the entry points run in. Script paths resolve from here.                                   |
-| `artifact_path`           | string  | `""`     | Path to the produced zip, relative to `app_path`. Empty auto-discovers exactly one `.zip`.           |
-| `npm_build_script`        | string  | `build`  | npm script that builds. Empty skips the build. `nodejs` only.                                        |
-| `npm_zip_script`          | string  | `zip`    | npm script that zips. Empty skips it. `nodejs` only.                                                 |
-| `build_script`            | string  | `""`     | Path to the build script, relative to `app_path`. **Required** when `runtime` is `python`.           |
-| `zip_script`              | string  | `""`     | Path to the zip script, relative to `app_path`. **Required** when `runtime` is `python`.             |
-| `python_package_manager`  | string  | `uv`     | `uv` or `pip`. Installed before `build_script` runs; the script decides how to use it.               |
-| `node_version`            | string  | `24.x`   | Node version installed for the `nodejs` path.                                                        |
-| `python_version`          | string  | `3.12`   | Python version installed for the `python` path. Match the function's runtime.                        |
-| `architecture`            | string  | `""`     | `x86_64` or `arm64`. Empty leaves the function's own setting untouched.                              |
-| `aws_region`              | string  | `""`     | Region of the function. Empty falls back to the environment's `AWS_REGION`.                          |
-| `lint_command`            | string  | `""`     | Command used for linting, run after the build. Empty skips it.                                       |
-| `test_command`            | string  | `""`     | Command used for testing, run after the build. Empty skips it.                                       |
-| `publish`                 | boolean | `true`   | Publish a numbered version once the update settles. Required for `alias`.                            |
-| `alias`                   | string  | `""`     | Alias moved to the new version, e.g. `live`. Empty leaves aliases alone.                             |
-| `codeartifact_domain`     | string  | `""`     | CodeArtifact domain the dependencies come from. Empty uses the public registry.                      |
-| `codeartifact_repository` | string  | `""`     | CodeArtifact repository. Required when `codeartifact_domain` is set.                                 |
-| `codeartifact_namespace`  | string  | `""`     | npm scope bound to CodeArtifact, without the leading `@`. Empty moves the whole registry. npm only.  |
-| `codeartifact_region`     | string  | `""`     | Where the domain lives, not where this deploys.                                                      |
+| Input                    | Type   | Default | Description                                                                                |
+| ------------------------ | ------ | ------- | ------------------------------------------------------------------------------------------ |
+| `environment`            | string | —       | **Required.** Target environment. Supplies `AWS_REGION`.                                   |
+| `function_name`          | string | —       | **Required.** Name of the function to update.                                              |
+| `runtime`                | string | —       | **Required.** `nodejs` or `python`.                                                        |
+| `app_path`               | string | `.`     | Directory the entry points run in. Script paths resolve from here.                         |
+| `artifact_path`          | string | `""`    | Path to the produced zip, relative to `app_path`. Empty auto-discovers exactly one `.zip`. |
+| `npm_build_script`       | string | `build` | npm script that builds. Empty skips the build. `nodejs` only.                              |
+| `npm_zip_script`         | string | `zip`   | npm script that zips. Empty skips it. `nodejs` only.                                       |
+| `build_script`           | string | `""`    | Path to the build script, relative to `app_path`. **Required** when `runtime` is `python`. |
+| `zip_script`             | string | `""`    | Path to the zip script, relative to `app_path`. **Required** when `runtime` is `python`.   |
+| `python_package_manager` | string | `uv`    | `uv` or `pip`. Installed before `build_script` runs; the script decides how to use it.     |
+| `node_version`           | string | `24.x`  | Node version installed for the `nodejs` path.                                              |
+| `python_version`         | string | `3.12`  | Python version installed for the `python` path. Match the function's runtime.              |
+| `aws_region`             | string | `""`    | Region of the function. Empty falls back to the environment's `AWS_REGION`.                |
 
 **Secrets**
 
@@ -268,20 +256,17 @@ needs no rebuild, because every version is immutable. An `alias` without
 
 **Outputs**
 
-| Output             | Description                                                              |
-| ------------------ | -------------------------------------------------------------------------- |
-| `function_version` | Version published, or `$LATEST` when `publish` is false.                 |
+| Output             | Description                                                               |
+| ------------------ | ------------------------------------------------------------------------- |
+| `function_version` | Immutable numbered version published from this run.                       |
 | `code_sha256`      | `CodeSha256` of the deployed package. Identifies the exact bytes running. |
 
 </details>
 
-The role in `IAM_ROLE_ARN` needs `lambda:UpdateFunctionCode` and
-`lambda:GetFunctionConfiguration`, plus — when publishing or aliasing —
-`lambda:PublishVersion`, `lambda:GetAlias`, `lambda:CreateAlias` and
-`lambda:UpdateAlias`. Because the zip travels in the request, no S3 permissions
-and no build bucket are involved. Add `codeartifact:GetAuthorizationToken`,
-`codeartifact:GetRepositoryEndpoint`, `codeartifact:ReadFromRepository` and
-`sts:GetServiceBearerToken` when `codeartifact_domain` is set.
+The role in `IAM_ROLE_ARN` needs exactly three permissions on the function:
+`lambda:UpdateFunctionCode`, `lambda:GetFunctionConfiguration` and
+`lambda:PublishVersion`. Because the zip travels in the request, no S3
+permissions and no build bucket are involved.
 
 ---
 

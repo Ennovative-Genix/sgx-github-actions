@@ -1,8 +1,8 @@
 name: Deploy - Lambda
 
 # The project owns building and zipping. This workflow installs the toolchain,
-# runs the project's own build and zip entry points, then uploads the resulting
-# zip straight to Lambda -- no S3 hop.
+# runs the project's own build and zip entry points, uploads the resulting zip
+# straight to Lambda -- no S3 hop -- and publishes an immutable version.
 #
 #   nodejs  ->  npm run <npm_build_script>  then  npm run <npm_zip_script>
 #   python  ->  bash <build_script>         then  bash <zip_script>
@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       function_name:
-        description: "Name or ARN of the Lambda function to update."
+        description: "Name of the Lambda function to update."
         required: true
         type: string
       runtime:
@@ -67,53 +67,8 @@ on:
         required: false
         type: string
         default: "3.12"
-      architecture:
-        description: "Architecture recorded on the function: 'x86_64' or 'arm64'. Empty leaves the function's own setting untouched, which is almost always what you want -- the build already decided this."
-        required: false
-        type: string
-        default: ""
       aws_region:
         description: "Region holding the function. Empty falls back to the environment's AWS_REGION variable."
-        required: false
-        type: string
-        default: ""
-      lint_command:
-        description: "Shell command used for linting, run in app_path after the build. Empty skips linting."
-        required: false
-        type: string
-        default: ""
-      test_command:
-        description: "Shell command used for testing, run in app_path after the build. Empty skips testing."
-        required: false
-        type: string
-        default: ""
-      publish:
-        description: "Publish an immutable numbered version after the code update settles."
-        required: false
-        type: boolean
-        default: true
-      alias:
-        description: "Alias moved to the newly published version, e.g. 'live'. Empty leaves aliases alone. Requires publish."
-        required: false
-        type: string
-        default: ""
-      codeartifact_domain:
-        description: "CodeArtifact domain the dependencies come from. Empty installs from the public registry."
-        required: false
-        type: string
-        default: ""
-      codeartifact_repository:
-        description: "CodeArtifact repository the dependencies come from. Required when codeartifact_domain is set."
-        required: false
-        type: string
-        default: ""
-      codeartifact_namespace:
-        description: "npm scope bound to CodeArtifact, without the leading @. Empty points the whole registry at CodeArtifact. nodejs only."
-        required: false
-        type: string
-        default: ""
-      codeartifact_region:
-        description: "Region the CodeArtifact domain lives in -- where the domain is, not where this deploys. Empty uses the deployment region."
         required: false
         type: string
         default: ""
@@ -123,7 +78,7 @@ on:
         required: true
     outputs:
       function_version:
-        description: "Version that was published, or '$LATEST' when publish is false."
+        description: "Immutable numbered version published from this run."
         value: ${{ jobs.deploy.outputs.function_version }}
       code_sha256:
         description: "CodeSha256 of the deployed package. Identifies the exact bytes now running."
@@ -161,11 +116,6 @@ jobs:
           BUILD_SCRIPT: ${{ inputs.build_script }}
           ZIP_SCRIPT: ${{ inputs.zip_script }}
           PY_PACKAGE_MANAGER: ${{ inputs.python_package_manager }}
-          ARCHITECTURE: ${{ inputs.architecture }}
-          PUBLISH: ${{ inputs.publish }}
-          ALIAS: ${{ inputs.alias }}
-          CA_DOMAIN: ${{ inputs.codeartifact_domain }}
-          CA_REPOSITORY: ${{ inputs.codeartifact_repository }}
         run: |
           set -euo pipefail
 
@@ -198,23 +148,6 @@ jobs:
             esac
           fi
 
-          if [ -n "$ARCHITECTURE" ]; then
-            case "$ARCHITECTURE" in
-              x86_64|arm64) ;;
-              *) fail "Unsupported architecture" "architecture must be 'x86_64', 'arm64' or empty; got '$ARCHITECTURE'." ;;
-            esac
-          fi
-
-          # An alias can only point at a numbered version, and only `publish`
-          # creates one. Silently ignoring the alias would look like success.
-          if [ -n "$ALIAS" ] && [ "$PUBLISH" != "true" ]; then
-            fail "Alias without publish" "alias '$ALIAS' needs a numbered version to point at; set publish: true or clear alias."
-          fi
-
-          if [ -n "$CA_DOMAIN" ] && [ -z "$CA_REPOSITORY" ]; then
-            fail "Incomplete CodeArtifact config" "codeartifact_domain is set, so codeartifact_repository is required."
-          fi
-
           echo "Inputs validated for runtime '$RUNTIME'."
 
       - name: Configure AWS credentials
@@ -226,18 +159,6 @@ jobs:
           fallback-region: ${{ vars.AWS_REGION }}
           session-name: lambda-deploy
 
-      - name: CodeArtifact token generation
-        id: codeartifact
-        if: inputs.codeartifact_domain != ''
-        uses: Ennovative-Genix/sgx-github-actions/actions/codeartifact-token@development
-        env:
-          # The domain can live in a different region from the function. The
-          # action shells out to the CLI, which reads this.
-          AWS_REGION: ${{ inputs.codeartifact_region != '' && inputs.codeartifact_region || steps.aws.outputs.region }}
-        with:
-          domain: ${{ inputs.codeartifact_domain }}
-          domain-owner: ${{ steps.aws.outputs.account-id }}
-
       # --- nodejs toolchain -------------------------------------------------
 
       - name: Setup Node.js
@@ -245,40 +166,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ inputs.node_version }}
-
-      - name: Point npm at CodeArtifact
-        if: inputs.runtime == 'nodejs' && inputs.codeartifact_domain != ''
-        env:
-          CA_DOMAIN: ${{ inputs.codeartifact_domain }}
-          CA_REPOSITORY: ${{ inputs.codeartifact_repository }}
-          CA_NAMESPACE: ${{ inputs.codeartifact_namespace }}
-          CA_OWNER: ${{ steps.aws.outputs.account-id }}
-          CA_REGION: ${{ inputs.codeartifact_region != '' && inputs.codeartifact_region || steps.aws.outputs.region }}
-          CA_TOKEN: ${{ steps.codeartifact.outputs.token }}
-        run: |
-          set -euo pipefail
-
-          endpoint="$(aws codeartifact get-repository-endpoint \
-            --domain "$CA_DOMAIN" \
-            --domain-owner "$CA_OWNER" \
-            --repository "$CA_REPOSITORY" \
-            --region "$CA_REGION" \
-            --format npm \
-            --query repositoryEndpoint \
-            --output text)"
-
-          # A scope keeps public packages on the public registry; without one the
-          # whole registry moves, and every dependency has to exist upstream.
-          if [ -n "$CA_NAMESPACE" ]; then
-            npm config set "@${CA_NAMESPACE}:registry" "$endpoint"
-          else
-            npm config set registry "$endpoint"
-          fi
-
-          # npm keys credentials on the registry URL with the scheme stripped.
-          npm config set "${endpoint#https:}:_authToken" "$CA_TOKEN"
-
-          echo "npm authenticated against ${CA_DOMAIN}/${CA_REPOSITORY}."
 
       - name: Install npm dependencies
         if: inputs.runtime == 'nodejs'
@@ -309,43 +196,11 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Point pip and uv at CodeArtifact
-        if: inputs.runtime == 'python' && inputs.codeartifact_domain != ''
-        env:
-          CA_DOMAIN: ${{ inputs.codeartifact_domain }}
-          CA_REPOSITORY: ${{ inputs.codeartifact_repository }}
-          CA_OWNER: ${{ steps.aws.outputs.account-id }}
-          CA_REGION: ${{ inputs.codeartifact_region != '' && inputs.codeartifact_region || steps.aws.outputs.region }}
-          CA_TOKEN: ${{ steps.codeartifact.outputs.token }}
-        run: |
-          set -euo pipefail
+      # --- build and package ------------------------------------------------
 
-          endpoint="$(aws codeartifact get-repository-endpoint \
-            --domain "$CA_DOMAIN" \
-            --domain-owner "$CA_OWNER" \
-            --repository "$CA_REPOSITORY" \
-            --region "$CA_REGION" \
-            --format pypi \
-            --query repositoryEndpoint \
-            --output text)"
-
-          # The endpoint carries a trailing slash; PEP 503 lives under simple/.
-          index="https://aws:${CA_TOKEN}@${endpoint#https://}simple/"
-
-          # The token inside the URL is already masked by the token action, so
-          # the value logs as https://aws:***@... rather than leaking.
-          {
-            echo "PIP_INDEX_URL=$index"
-            echo "UV_INDEX_URL=$index"
-          } >> "$GITHUB_ENV"
-
-          echo "pip and uv pointed at ${CA_DOMAIN}/${CA_REPOSITORY}."
-
-      # --- build, verify, package -------------------------------------------
-
-      # Build first, then lint and test. On the python path build_script is also
-      # what installs the project's dependencies, so anything the linter or the
-      # test suite imports only exists once it has run.
+      # On the python path build_script owns installing the project's
+      # dependencies as well as compiling: the workflow only puts the
+      # interpreter and uv on the runner.
       - name: Build
         if: (inputs.runtime == 'nodejs' && inputs.npm_build_script != '') || inputs.runtime == 'python'
         working-directory: ${{ inputs.app_path }}
@@ -368,16 +223,6 @@ jobs:
               bash "$BUILD_SCRIPT"
             fi
           fi
-
-      - name: Lint
-        if: inputs.lint_command != ''
-        working-directory: ${{ inputs.app_path }}
-        run: ${{ inputs.lint_command }}
-
-      - name: Test
-        if: inputs.test_command != ''
-        working-directory: ${{ inputs.app_path }}
-        run: ${{ inputs.test_command }}
 
       - name: Package
         if: (inputs.runtime == 'nodejs' && inputs.npm_zip_script != '') || inputs.runtime == 'python'
@@ -465,17 +310,14 @@ jobs:
         env:
           FUNCTION_NAME: ${{ inputs.function_name }}
           ZIP_PATH: ${{ steps.artifact.outputs.path }}
-          ARCHITECTURE: ${{ inputs.architecture }}
         run: |
           set -euo pipefail
 
-          args=(--function-name "$FUNCTION_NAME" --zip-file "fileb://${ZIP_PATH}")
-
-          # Only sent when the caller asked for it: passing the default would
-          # silently flip a Graviton function back to x86_64.
-          [ -n "$ARCHITECTURE" ] && args+=(--architectures "$ARCHITECTURE")
-
-          code_sha="$(aws lambda update-function-code "${args[@]}" \
+          # Code only. The function's own configuration -- architecture, memory,
+          # handler, environment -- is left exactly as it is.
+          code_sha="$(aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file "fileb://${ZIP_PATH}" \
             --query CodeSha256 --output text)"
 
           echo "code_sha256=$code_sha" >> "$GITHUB_OUTPUT"
@@ -505,21 +347,13 @@ jobs:
 
           echo "Function reached LastUpdateStatus: Successful."
 
-      - name: Publish version and move alias
+      - name: Publish version
         id: deploy
         env:
           FUNCTION_NAME: ${{ inputs.function_name }}
           CODE_SHA256: ${{ steps.update.outputs.code_sha256 }}
-          PUBLISH: ${{ inputs.publish }}
-          ALIAS: ${{ inputs.alias }}
         run: |
           set -euo pipefail
-
-          if [ "$PUBLISH" != "true" ]; then
-            echo "function_version=\$LATEST" >> "$GITHUB_OUTPUT"
-            echo "publish is false; the function runs \$LATEST."
-            exit 0
-          fi
 
           # --code-sha256 makes this a compare-and-swap: two runs racing cannot
           # publish each other's code under their own version number.
@@ -532,37 +366,13 @@ jobs:
           echo "function_version=$version" >> "$GITHUB_OUTPUT"
           echo "Published version $version."
 
-          if [ -z "$ALIAS" ]; then
-            exit 0
-          fi
-
-          if previous="$(aws lambda get-alias \
-              --function-name "$FUNCTION_NAME" \
-              --name "$ALIAS" \
-              --query FunctionVersion --output text 2>/dev/null)"; then
-            aws lambda update-alias \
-              --function-name "$FUNCTION_NAME" \
-              --name "$ALIAS" \
-              --function-version "$version" >/dev/null
-            echo "previous_version=$previous" >> "$GITHUB_OUTPUT"
-            echo "Alias '$ALIAS' moved from version $previous to $version."
-          else
-            aws lambda create-alias \
-              --function-name "$FUNCTION_NAME" \
-              --name "$ALIAS" \
-              --function-version "$version" >/dev/null
-            echo "Alias '$ALIAS' created at version $version."
-          fi
-
       - name: Summarise
         if: always() && steps.update.outcome == 'success'
         env:
           FUNCTION_NAME: ${{ inputs.function_name }}
           VERSION: ${{ steps.deploy.outputs.function_version }}
-          PREVIOUS_VERSION: ${{ steps.deploy.outputs.previous_version }}
           CODE_SHA256: ${{ steps.update.outputs.code_sha256 }}
           ARTIFACT_BYTES: ${{ steps.artifact.outputs.bytes }}
-          ALIAS: ${{ inputs.alias }}
           REGION: ${{ steps.aws.outputs.region }}
         run: |
           {
@@ -570,17 +380,7 @@ jobs:
             echo ""
             echo "- Function: \`${FUNCTION_NAME}\`"
             echo "- Region: \`${REGION}\`"
-            echo "- Version: \`${VERSION:-\$LATEST}\`"
+            echo "- Version: \`${VERSION:-not published}\`"
             echo "- CodeSha256: \`${CODE_SHA256}\`"
             echo "- Package: $((ARTIFACT_BYTES / 1024)) KiB"
-
-            if [ -n "$ALIAS" ] && [ -n "${PREVIOUS_VERSION:-}" ]; then
-              echo ""
-              echo "Roll back with:"
-              echo ""
-              echo '```bash'
-              echo "aws lambda update-alias --function-name ${FUNCTION_NAME} \\"
-              echo "  --name ${ALIAS} --function-version ${PREVIOUS_VERSION} --region ${REGION}"
-              echo '```'
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
