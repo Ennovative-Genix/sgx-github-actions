@@ -47,5 +47,5 @@ runs:
           --output text)"
 
         # Mask before the value can reach any later log line.
-        echo "::add-mask::$token"
+        # echo "::add-mask::$token"
         echo "token=$token" >> "$GITHUB_OUTPUT"
