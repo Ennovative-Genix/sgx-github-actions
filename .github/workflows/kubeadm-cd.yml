@@ -67,7 +67,7 @@ jobs:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
       K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
-      K8S_API_HOST: 12.0.3.244
+      K8S_API_HOST: 12.0.3.221
       K8S_TUNNEL_LOCAL_PORT: 8443
 
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1'
