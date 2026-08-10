@@ -141,6 +141,7 @@ Set these in your repository's Settings > Environments > [environment] > Environ
 | `UI_PORT_MAPPING`       | Port mapping for UI apps (when `is_ui_app` is true)  |
 | `CLOUDWATCH_LOG_GROUP`  | CloudWatch log group name                             |
 | `CLOUDWATCH_LOG_STREAM` | CloudWatch log stream name                            |
+| `AWS_SECRETS_REGION`    | (Optional) Region for Secrets Manager. Defaults to `ap-south-1` |
 
 ### Secrets
 
@@ -173,7 +174,7 @@ Deploy workflows select the AWS region from the branch that triggers the run:
 | `main`      | `ap-south-1`| Production    |
 | Other (e.g. `dev`, feature branches) | `ap-south-1` | Development |
 
-Ensure EC2 instances, S3 buckets, and IAM roles are in the region that matches the branch you deploy from. Secrets Manager always reads from `ap-south-1`.
+Ensure EC2 instances, S3 buckets, and IAM roles are in the region that matches the branch you deploy from. Secrets Manager region is taken from the `AWS_SECRETS_REGION` environment variable, and defaults to `ap-south-1` when unset.
 
 ---
 
