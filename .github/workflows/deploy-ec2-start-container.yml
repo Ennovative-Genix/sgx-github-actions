@@ -45,6 +45,8 @@ jobs:
       CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
       CLOUDWATCH_LOG_STREAM: ${{ vars.CLOUDWATCH_LOG_STREAM }}
       AWS_SECRETS_ARN: ${{ secrets.AWS_SECRETS_ARN }}
+      # Defaults to ap-south-1 when AWS_SECRETS_REGION env variable is unset
+      AWS_SECRETS_REGION: ${{ vars.AWS_SECRETS_REGION || 'ap-south-1' }}
     permissions:
       id-token: write
       contents: read
@@ -85,15 +87,14 @@ jobs:
           workflow-repo/.github/scripts/poll-ssm-command.sh "$COMMAND_ID" "${{ env.EC2_INSTANCE_ID }}" "${{ env.AWS_REGION }}" "Ensure app directory exists"
 
       - name: Fetch .env from AWS Secrets Manager
-        # Since all the secrets are in the ap-south-1 region, we can use the ap-south-1 region for the AWS Secrets Manager
         if: ${{ env.AWS_SECRETS_ARN != '' }}
         run: |
           aws secretsmanager get-secret-value \
             --secret-id ${{ env.AWS_SECRETS_ARN }} \
-            --region ap-south-1 \
+            --region ${{ env.AWS_SECRETS_REGION }} \
             --query 'SecretString' \
             --output text > .env
-          echo ".env file fetched from AWS Secrets Manager"
+          echo ".env file fetched from AWS Secrets Manager (region: ${{ env.AWS_SECRETS_REGION }})"
 
       - name: Copy .env to EC2 Instance
         if: ${{ env.AWS_SECRETS_ARN != '' }}
