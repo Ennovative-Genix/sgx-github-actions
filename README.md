@@ -139,7 +139,7 @@ Usable directly from any job:
 | [`actions/aws-oidc-auth`](actions/aws-oidc-auth)           | Resolve the region and assume a role via OIDC. No stored keys   |
 | [`actions/setup-node`](actions/setup-node)                 | Node with npm/yarn/pnpm caching and a lockfile-faithful install |
 | [`actions/compute-version`](actions/compute-version)       | One version per run, from tag, manifest or run number           |
-| [`actions/codeartifact-token`](actions/codeartifact-token) | Configure npm against CodeArtifact                              |
+| [`actions/codeartifact-token`](actions/codeartifact-token) | Mint a CodeArtifact token; configure npm, pip or twine with it  |
 
 ---
 

@@ -1,5 +1,5 @@
 name: "CodeArtifact Auth Token"
-description: "Request an authorization token for an AWS CodeArtifact."
+description: "Request an authorization token for an AWS CodeArtifact domain and, optionally, point a package manager at one of its repositories."
 
 inputs:
   domain:
@@ -7,6 +7,22 @@ inputs:
     required: true
   domain-owner:
     description: "AWS account id that owns the domain. Defaults to the calling account."
+    required: false
+    default: ""
+  repository:
+    description: "CodeArtifact repository. Required for every tool other than 'none'; leave empty to mint a bare token."
+    required: false
+    default: ""
+  region:
+    description: "Region of the domain. Defaults to the region of the assumed role."
+    required: false
+    default: ""
+  tool:
+    description: "Package manager to configure: none, npm, pip or twine. 'none' only mints the token."
+    required: false
+    default: "none"
+  namespace:
+    description: "npm scope to bind to the repository, without the leading @. Empty binds the default registry. Ignored unless tool is npm."
     required: false
     default: ""
   duration-seconds:
@@ -18,6 +34,9 @@ outputs:
   token:
     description: "CodeArtifact authorization token. Registered as a masked secret."
     value: ${{ steps.token.outputs.token }}
+  endpoint:
+    description: "Endpoint of the repository, or empty when no repository was given."
+    value: ${{ steps.token.outputs.endpoint }}
 
 runs:
   using: composite
@@ -28,6 +47,10 @@ runs:
       env:
         CA_DOMAIN: ${{ inputs.domain }}
         CA_DOMAIN_OWNER: ${{ inputs.domain-owner }}
+        CA_REPOSITORY: ${{ inputs.repository }}
+        CA_REGION: ${{ inputs.region }}
+        CA_TOOL: ${{ inputs.tool }}
+        CA_NAMESPACE: ${{ inputs.namespace }}
         CA_DURATION: ${{ inputs.duration-seconds }}
       run: |
         set -euo pipefail
@@ -37,8 +60,25 @@ runs:
           exit 1
         fi
 
+        case "$CA_TOOL" in
+          none|npm|pip|twine) ;;
+          *)
+            echo "::error title=Unknown tool::'tool' has to be one of none, npm, pip or twine; got '$CA_TOOL'."
+            exit 1
+            ;;
+        esac
+
+        # Every tool needs a repository to point at. Failing here rather than at
+        # publish time keeps a missing repository from degrading into a silent
+        # upload to the public registry.
+        if [ "$CA_TOOL" != "none" ] && [ -z "$CA_REPOSITORY" ]; then
+          echo "::error title=Incomplete CodeArtifact config::'repository' is required when tool is '$CA_TOOL'."
+          exit 1
+        fi
+
         args=(--domain "$CA_DOMAIN")
         [ -n "$CA_DOMAIN_OWNER" ] && args+=(--domain-owner "$CA_DOMAIN_OWNER")
+        [ -n "$CA_REGION" ] && args+=(--region "$CA_REGION")
 
         token="$(aws codeartifact get-authorization-token \
           "${args[@]}" \
@@ -46,6 +86,60 @@ runs:
           --query authorizationToken \
           --output text)"
 
-        # Mask before the value can reach any later log line.
-        # echo "::add-mask::$token"
+        # Mask before the value can reach any later log line. Masking is
+        # log-only: the real value still flows through outputs and GITHUB_ENV.
+        echo "::add-mask::$token"
         echo "token=$token" >> "$GITHUB_OUTPUT"
+
+        endpoint=""
+        if [ -n "$CA_REPOSITORY" ]; then
+          # npm and pypi are different endpoints on the same repository, so the
+          # format follows the tool rather than the repository.
+          case "$CA_TOOL" in
+            npm)          format="npm" ;;
+            pip|twine)    format="pypi" ;;
+            none)         format="" ;;
+          esac
+
+          if [ -n "$format" ]; then
+            endpoint="$(aws codeartifact get-repository-endpoint \
+              "${args[@]}" \
+              --repository "$CA_REPOSITORY" \
+              --format "$format" \
+              --query repositoryEndpoint \
+              --output text)"
+          fi
+        fi
+
+        echo "endpoint=$endpoint" >> "$GITHUB_OUTPUT"
+
+        case "$CA_TOOL" in
+          npm)
+            # npm keys credentials on the registry path with the scheme stripped,
+            # so the same repository authenticated under two spellings is two
+            # unrelated entries as far as npm is concerned.
+            echo "//${endpoint#https://}:_authToken=$token" >> ~/.npmrc
+
+            if [ -n "$CA_NAMESPACE" ]; then
+              echo "@${CA_NAMESPACE}:registry=$endpoint" >> ~/.npmrc
+            else
+              echo "registry=$endpoint" >> ~/.npmrc
+            fi
+            ;;
+          pip)
+            # pip wants the PEP 503 index under the repository endpoint, not the
+            # endpoint itself, and takes its credentials inline.
+            echo "PIP_INDEX_URL=https://aws:${token}@${endpoint#https://}simple/" >> "$GITHUB_ENV"
+            ;;
+          twine)
+            {
+              echo "TWINE_REPOSITORY_URL=$endpoint"
+              echo "TWINE_USERNAME=aws"
+              echo "TWINE_PASSWORD=$token"
+            } >> "$GITHUB_ENV"
+            ;;
+        esac
+
+        if [ -n "$endpoint" ]; then
+          echo "Configured '$CA_TOOL' against $endpoint"
+        fi
