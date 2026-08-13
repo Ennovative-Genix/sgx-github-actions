@@ -284,6 +284,12 @@ jobs:
           # the named container (not '*') avoids clobbering sidecars in multi-container pods.
           kubectl set image "deployment/${DEPLOYMENT_NAME}" "${CONTAINER_NAME}=${IMAGE}" -n "$NAMESPACE"
 
+          # Secret updates (envFrom / secretKeyRef) do not restart pods by themselves, and
+          # set image is a no-op when the digest is unchanged (common on workflow re-runs).
+          # Always restart so pods reload the synced Secret and every pipeline run rolls out.
+          kubectl rollout restart "deployment/${DEPLOYMENT_NAME}" -n "$NAMESPACE"
+          echo "✓ Triggered rollout restart for deployment/${DEPLOYMENT_NAME}"
+
       - name: Wait for rollout (auto-rollback on failure)
         run: |
           set -euo pipefail
