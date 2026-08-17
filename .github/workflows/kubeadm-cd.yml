@@ -67,7 +67,7 @@ jobs:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
       K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
-      K8S_API_HOST: 12.0.3.221
+      K8S_API_HOST: ${{ vars.K8S_API_HOST }}
       K8S_TUNNEL_LOCAL_PORT: 8443
 
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1'
@@ -98,6 +98,13 @@ jobs:
 
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
+
+      - name: Verify K8S_API_HOST is configured
+        run: |
+          if [ -z "${K8S_API_HOST}" ]; then
+            echo "::error::K8S_API_HOST environment variable is required for SSM tunnel"
+            exit 1
+          fi
 
       - name: Start SSM tunnel to kube-apiserver
         run: |
