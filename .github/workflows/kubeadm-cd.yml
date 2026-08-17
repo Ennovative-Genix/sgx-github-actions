@@ -162,9 +162,15 @@ jobs:
 
           chmod 600 ~/.kube/config
 
-          kubectl config unset clusters.kubernetes.certificate-authority-data
+          CLUSTER_NAME=$(kubectl config view -o jsonpath='{.clusters[0].name}')
+          if [ -z "${CLUSTER_NAME}" ]; then
+            echo "::error::Could not determine cluster name from kubeconfig"
+            exit 1
+          fi
 
-          kubectl config set-cluster kubernetes \
+          kubectl config unset "clusters.${CLUSTER_NAME}.certificate-authority-data"
+
+          kubectl config set-cluster "${CLUSTER_NAME}" \
             --server=https://127.0.0.1:${K8S_TUNNEL_LOCAL_PORT} \
             --insecure-skip-tls-verify=true
 
