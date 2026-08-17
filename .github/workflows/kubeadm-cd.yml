@@ -42,6 +42,11 @@ on:
         default: "k8s"
         type: string
 
+      k8s_api_host:
+        description: Private IP of the kube-apiserver for SSM port forwarding
+        required: true
+        type: string
+
     secrets:
       IAM_ROLE_ARN:
         required: true
@@ -67,7 +72,7 @@ jobs:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
       K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
-      K8S_API_HOST: ${{ vars.K8S_API_HOST }}
+      K8S_API_HOST: ${{ inputs.k8s_api_host }}
       K8S_TUNNEL_LOCAL_PORT: 8443
 
       AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1'
