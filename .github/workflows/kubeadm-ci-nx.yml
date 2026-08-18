@@ -36,7 +36,6 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
 
     permissions:
       id-token: write
@@ -62,8 +61,10 @@ jobs:
         uses: aws-actions/amazon-ecr-login@b040164c4934333d597f3f9c67502ff28f814e9c
 
       - name: Build Docker Image
+        working-directory: ${{ inputs.app_path }}
         run: |
           docker build \
+          --build-arg ENV=${{ inputs.environment }} \
           -f ${{ inputs.dockerfile_path }} \
           -t ${{ inputs.docker_image_name }}:latest .
 
