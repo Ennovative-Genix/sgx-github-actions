@@ -1,0 +1,234 @@
+name: Reusable K8s Deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: string
+
+      ecr_repository:
+        description: ECR repository name
+        required: true
+        type: string
+
+      docker_image_name:
+        description: Application name
+        required: true
+        type: string
+
+      deployment_name:
+        description: Kubernetes deployment name
+        required: false
+        default: ""
+        type: string
+
+      container_name:
+        description: Kubernetes container name
+        required: false
+        default: ""
+        type: string
+
+      namespace:
+        description: Kubernetes namespace
+        required: false
+        default: ""
+        type: string
+
+      manifest_path:
+        description: Manifest directory
+        required: false
+        default: "k8s"
+        type: string
+
+      k8s_api_host:
+        description: Private IP of the kube-apiserver for SSM port forwarding
+        required: true
+        type: string
+
+    secrets:
+      IAM_ROLE_ARN:
+        required: true
+
+      DEV_KUBE_CONFIG:
+        required: true
+
+      K8S_INSTANCE_ID:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+
+    environment: ${{ inputs.environment }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+      K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
+      K8S_API_HOST: ${{ inputs.k8s_api_host }}
+      K8S_TUNNEL_LOCAL_PORT: 8443
+
+      AWS_REGION: ${{ startsWith(github.ref_name, 'release/') && 'us-east-1'
+        || github.ref_name == 'main' && 'us-east-1'
+        || github.ref_name == 'staging' && 'us-east-1'
+        || 'ap-south-1' }}
+
+      NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
+
+      DEPLOYMENT_NAME: ${{ inputs.deployment_name != '' && inputs.deployment_name || inputs.docker_image_name }}
+
+      CONTAINER_NAME: ${{ inputs.container_name != '' && inputs.container_name || inputs.docker_image_name }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Verify K8S_API_HOST is configured
+        run: |
+          if [ -z "${K8S_API_HOST}" ]; then
+            echo "::error::K8S_API_HOST environment variable is required for SSM tunnel"
+            exit 1
+          fi
+
+      - name: Start SSM tunnel to kube-apiserver
+        run: |
+          set -euo pipefail
+
+          curl -fsSL https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb \
+            -o /tmp/session-manager-plugin.deb
+
+          sudo dpkg -i /tmp/session-manager-plugin.deb
+
+          session-manager-plugin --version
+
+          echo "Tunneling ${K8S_API_HOST}:6443 -> 127.0.0.1:${K8S_TUNNEL_LOCAL_PORT}"
+
+          nohup aws ssm start-session \
+            --target "$K8S_INSTANCE_ID" \
+            --region "$AWS_REGION" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters "{\"host\":[\"${K8S_API_HOST}\"],\"portNumber\":[\"6443\"],\"localPortNumber\":[\"${K8S_TUNNEL_LOCAL_PORT}\"]}" \
+            >/tmp/ssm-k8s-tunnel.log 2>&1 &
+
+          echo $! >/tmp/ssm-k8s-tunnel.pid
+
+          echo "Waiting for SSM tunnel..."
+
+          for i in $(seq 1 60); do
+            if (echo >/dev/tcp/127.0.0.1/${K8S_TUNNEL_LOCAL_PORT}) >/dev/null 2>&1; then
+              echo "Tunnel ready"
+              exit 0
+            fi
+
+            if ! kill -0 "$(cat /tmp/ssm-k8s-tunnel.pid)" 2>/dev/null; then
+              echo "::error::Tunnel process exited"
+              cat /tmp/ssm-k8s-tunnel.log
+              exit 1
+            fi
+
+            sleep 1
+          done
+
+          echo "::error::Timeout waiting for tunnel"
+          cat /tmp/ssm-k8s-tunnel.log
+          exit 1
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+
+          echo "$DEV_KUBE_CONFIG" | base64 -d > ~/.kube/config
+
+          chmod 600 ~/.kube/config
+
+          CLUSTER_NAME=$(kubectl config view -o jsonpath='{.clusters[0].name}')
+          if [ -z "${CLUSTER_NAME}" ]; then
+            echo "::error::Could not determine cluster name from kubeconfig"
+            exit 1
+          fi
+
+          kubectl config unset "clusters.${CLUSTER_NAME}.certificate-authority-data"
+
+          kubectl config set-cluster "${CLUSTER_NAME}" \
+            --server=https://127.0.0.1:${K8S_TUNNEL_LOCAL_PORT} \
+            --insecure-skip-tls-verify=true
+
+          kubectl config get-contexts
+          kubectl config current-context
+
+      - name: Verify Cluster Connectivity
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+
+      - name: Ensure Namespace Exists
+        run: |
+          kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || \
+          kubectl create namespace ${NAMESPACE}
+
+      - name: Apply Kubernetes Manifests
+        run: |
+          kubectl apply -f ${{ inputs.manifest_path }} -n ${NAMESPACE}
+
+      - name: Check Resources
+        run: |
+          kubectl get deployments -n ${NAMESPACE}
+          kubectl get svc -n ${NAMESPACE}
+          kubectl get pods -n ${NAMESPACE}
+
+      - name: Update Deployment Image
+        env:
+          IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "Updating deployment ${DEPLOYMENT_NAME}"
+          echo "Container: ${CONTAINER_NAME}"
+          echo "Image: ${IMAGE}"
+
+          kubectl set image deployment/${DEPLOYMENT_NAME} \
+            ${CONTAINER_NAME}=${IMAGE} \
+            -n ${NAMESPACE}
+
+          kubectl get deployment ${DEPLOYMENT_NAME} \
+            -n ${NAMESPACE} \
+            -o wide
+          
+      - name: Wait For Rollout
+        run: |
+          kubectl rollout status deployment/${DEPLOYMENT_NAME} \
+            -n ${NAMESPACE} \
+            --timeout=300s
+
+      - name: Pod Status
+        run: |
+          kubectl get pods -n ${NAMESPACE}
+
+      - name: Describe Pods
+        if: failure()
+        run: |
+          kubectl describe pods -n ${NAMESPACE}
+
+          
