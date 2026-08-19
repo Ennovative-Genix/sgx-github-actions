@@ -53,7 +53,22 @@ on:
         required: true
         type: string
 
+      aws_secret_arn:
+        description: "ARN of the AWS Secrets Manager secret to sync into the namespace. Optional."
+        required: false
+        default: ""
+        type: string
+
+      k8s_secret_name:
+        description: "Name of the Kubernetes secret to create from the AWS Secrets Manager secret. Defaults to the last part of the ARN."
+        required: false
+        default: ""
+        type: string
+
     secrets:
+      AWS_SECRET_ARN:
+        required: false
+
       IAM_ROLE_ARN:
         required: true
 
@@ -75,23 +90,19 @@ jobs:
       contents: read
 
     env:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
-      K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
-      K8S_API_HOST: ${{ inputs.k8s_api_host }}
-      K8S_TUNNEL_LOCAL_PORT: 8443
-
       AWS_REGION: ${{ inputs.env_region }}
-
-      NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
-
-      DEPLOYMENT_NAME: ${{ inputs.deployment_name != '' && inputs.deployment_name || inputs.docker_image_name }}
-
+      AWS_SECRET_ARN: ${{ inputs.aws_secret_arn != '' && inputs.aws_secret_arn || secrets.AWS_SECRET_ARN || vars.AWS_SECRET_ARN }}
       CONTAINER_NAME: ${{ inputs.container_name != '' && inputs.container_name || inputs.docker_image_name }}
-
+      DEPLOYMENT_NAME: ${{ inputs.deployment_name != '' && inputs.deployment_name || inputs.docker_image_name }}
+      DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
       ECR_REPOSITORY: ${{ inputs.ecr_repository != '' && inputs.ecr_repository || inputs.docker_image_name }}
-
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      K8S_API_HOST: ${{ inputs.k8s_api_host }}
+      K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
+      K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
+      K8S_TUNNEL_LOCAL_PORT: 8443
       MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
+      NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
 
     steps:
       - name: Checkout Repository
@@ -193,6 +204,88 @@ jobs:
         run: |
           kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || \
           kubectl create namespace ${NAMESPACE}
+
+      - name: Sync app secret from AWS Secrets Manager
+        if: ${{ env.AWS_SECRET_ARN != '' }}
+        run: |
+          set -euo pipefail
+          SECRET_ARN="$(printf '%s' "$AWS_SECRET_ARN" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          K8S_NAME="$(printf '%s' "${K8S_SECRET_NAME:-nova-server-secrets}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+          # Expect: arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME
+          if ! printf '%s' "$SECRET_ARN" | grep -Eq '^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+'; then
+            echo "::error::AWS_SECRET_ARN must be a Secrets Manager ARN (got '${SECRET_ARN}')"
+            exit 1
+          fi
+
+          SECRET_REGION="$(printf '%s' "$SECRET_ARN" | cut -d: -f4)"
+          [ -n "$SECRET_REGION" ] || { echo "::error::Could not parse region from AWS_SECRET_ARN"; exit 1; }
+          [ -n "$K8S_NAME" ] || { echo "::error::K8S_SECRET_NAME resolved empty"; exit 1; }
+
+          command -v jq >/dev/null 2>&1 || { sudo apt-get update -y && sudo apt-get install -y jq; }
+
+          echo "Syncing Secrets Manager ARN (region=${SECRET_REGION}) → Secret/${K8S_NAME} in namespace ${NAMESPACE}"
+          SECRET_STRING="$(aws secretsmanager get-secret-value \
+            --secret-id "$SECRET_ARN" \
+            --region "$SECRET_REGION" \
+            --query SecretString \
+            --output text)"
+
+          ENV_FILE="$(mktemp)"
+          trap 'rm -f "$ENV_FILE"' EXIT
+
+          # Support: (1) JSON object {"KEY":"val",...}  (2) dotenv / properties plaintext.
+          # Never print secret values.
+          if echo "$SECRET_STRING" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "$SECRET_STRING" | jq -r 'to_entries[] | "\(.key)=\(.value|tostring)"' > "$ENV_FILE"
+            echo "SecretString format: JSON object"
+          else
+            # Strip BOM/CR, then normalize KEY:value (common in EC2/legacy secrets) → KEY=value.
+            # Only the first separator after the key name is converted; values may contain ':' (URLs, ARNs).
+            NORMALIZED="$(mktemp)"
+            printf '%s\n' "$SECRET_STRING" | tr -d '\r' | sed '1s/^\xEF\xBB\xBF//' | awk '
+              /^[[:space:]]*$/ { next }
+              /^[[:space:]]*#/ { next }
+              # Already KEY=VALUE (keep as-is, trim leading space)
+              /^[[:space:]]*[A-Za-z_][A-Za-z0-9_.-]*[[:space:]]*=/ {
+                sub(/^[[:space:]]+/, "", $0)
+                print
+                next
+              }
+              # KEY: VALUE or KEY:VALUE → KEY=VALUE (legacy / Java-properties style)
+              /^[[:space:]]*[A-Za-z_][A-Za-z0-9_.-]*[[:space:]]*:/ {
+                sub(/^[[:space:]]+/, "", $0)
+                # split on first colon only
+                key = $0
+                sub(/[[:space:]]*:.*$/, "", key)
+                val = $0
+                sub(/^[^:]*:[[:space:]]*/, "", val)
+                print key "=" val
+                next
+              }
+              {
+                print "::warning::Skipping unrecognized secret line (need KEY=value or KEY: value)" > "/dev/stderr"
+              }
+            ' > "$NORMALIZED"
+            mv "$NORMALIZED" "$ENV_FILE"
+
+            if ! grep -Eq '^[A-Za-z_][A-Za-z0-9_.-]*=' "$ENV_FILE"; then
+              echo "::error::SecretString must be a JSON object, or plaintext KEY=value / KEY: value lines (e.g. MONGO_URI=... or CLOUDWATCH_LOG_GROUP:/aws/...)."
+              echo "::error::A single raw value with no key is not supported."
+              exit 1
+            fi
+            echo "SecretString format: dotenv/properties plaintext (normalized to KEY=value)"
+          fi
+
+          KEY_COUNT="$(grep -cE '^[A-Za-z_][A-Za-z0-9_.-]*=' "$ENV_FILE" || true)"
+          [ "$KEY_COUNT" -gt 0 ] || { echo "::error::No valid KEY=value entries after normalizing SecretString"; exit 1; }
+
+          kubectl create secret generic "$K8S_NAME" \
+            --namespace "$NAMESPACE" \
+            --from-env-file="$ENV_FILE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "✓ Kubernetes Secret/${K8S_NAME} synced (${KEY_COUNT} key(s); values not logged)"
 
       - name: Resolve manifest path
         id: manifests

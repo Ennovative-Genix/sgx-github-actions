@@ -65,24 +65,19 @@ jobs:
       id-token: write
       contents: read
     env:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       AWS_REGION: ${{ inputs.env_region }}
-      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
-      # Bastion used for SSM port-forward into the private EKS API (GitHub-hosted runners are outside the VPC).
-      EKS_BASTION_INSTANCE_ID: ${{ vars.EKS_BASTION_INSTANCE_ID }}
-      ENVIRONMENT: ${{ inputs.environment }}
-      IMAGE: ${{ inputs.image }}
-      NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
-      DEPLOYMENT_NAME: ${{ inputs.deployment_name != '' && inputs.deployment_name || inputs.docker_image_name }}
-      CONTAINER_NAME: ${{ inputs.container_name != '' && inputs.container_name || inputs.docker_image_name }}
-      MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
-      # Local end of the SSM tunnel (remote side always targets EKS :443).
-      EKS_TUNNEL_LOCAL_PORT: '8443'
-      # Resolve Secrets Manager ARN: input override → passed secret → Environment var.
-      # Reusable workflows only see secrets that were declared + passed (or inherit);
-      # environment: alone does not populate undeclared secrets.AWS_SECRET_ARN.
       AWS_SECRET_ARN: ${{ inputs.aws_secret_arn != '' && inputs.aws_secret_arn || secrets.AWS_SECRET_ARN || vars.AWS_SECRET_ARN }}
+      CONTAINER_NAME: ${{ inputs.container_name != '' && inputs.container_name || inputs.docker_image_name }}
+      DEPLOYMENT_NAME: ${{ inputs.deployment_name != '' && inputs.deployment_name || inputs.docker_image_name }}
+      EKS_BASTION_INSTANCE_ID: ${{ vars.EKS_BASTION_INSTANCE_ID }}
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      EKS_TUNNEL_LOCAL_PORT: "8443"
+      ENVIRONMENT: ${{ inputs.environment }}
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      IMAGE: ${{ inputs.image }}
       K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
+      MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
+      NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
 
     steps:
       - name: Checkout repository
