@@ -91,7 +91,7 @@ jobs:
 
     env:
       AWS_REGION: ${{ inputs.env_region }}
-      AWS_SECRET_ARN: ${{ inputs.aws_secret_arn != '' && inputs.aws_secret_arn || secrets.AWS_SECRET_ARN || vars.AWS_SECRET_ARN }}
+      AWS_SECRET_ARN: ${{secrets.AWS_SECRET_ARN || vars.AWS_SECRET_ARN }}
       CONTAINER_NAME: ${{ inputs.container_name != '' && inputs.container_name || inputs.docker_image_name }}
       DEPLOYMENT_NAME: ${{ inputs.deployment_name != '' && inputs.deployment_name || inputs.docker_image_name }}
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
