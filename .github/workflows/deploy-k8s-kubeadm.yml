@@ -60,7 +60,7 @@ on:
         type: string
 
       k8s_secret_name:
-        description: "Name of the Kubernetes secret to create from the AWS Secrets Manager secret. Defaults to the last part of the ARN."
+        description: "Kubernetes Secret name to create/update. Must match the Deployment's envFrom.secretRef.name. Required when aws_secret_arn/AWS_SECRET_ARN is set."
         required: false
         default: ""
         type: string
@@ -210,7 +210,7 @@ jobs:
         run: |
           set -euo pipefail
           SECRET_ARN="$(printf '%s' "$AWS_SECRET_ARN" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          K8S_NAME="$(printf '%s' "${K8S_SECRET_NAME:-nova-server-secrets}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          K8S_NAME="$(printf '%s' "${K8S_SECRET_NAME:-}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
           # Expect: arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME
           if ! printf '%s' "$SECRET_ARN" | grep -Eq '^arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+'; then

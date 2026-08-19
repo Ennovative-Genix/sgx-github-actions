@@ -58,7 +58,7 @@ on:
         type: string
         default: ""
       k8s_secret_name:
-        description: "Kubernetes Secret name to create/update. Defaults to nova-server-secrets."
+        description: "Kubernetes Secret name to create/update. Must match the Deployment's envFrom.secretRef.name. Required when aws_secret_arn/AWS_SECRET_ARN is set."
         required: false
         type: string
         default: ""
@@ -256,6 +256,7 @@ jobs:
       env_region: ${{ needs.validate-inputs.outputs.env_region }}
       environment: ${{ needs.validate-inputs.outputs.environment }}
       k8s_api_host: ${{ needs.validate-inputs.outputs.k8s_api_host }}
+      k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
       manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
     secrets:

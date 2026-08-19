@@ -34,7 +34,7 @@ jobs:
       # manifest_path: k8s/overlays/dev # Optional - auto-detected if omitted
       # namespace: dev                  # Optional - defaults to environment
       # aws_secret_arn: ...            # Optional override (prefer passing secret below)
-      # k8s_secret_name: nova-server-secrets
+      # k8s_secret_name: my-app-secrets   # Required if aws_secret_arn/AWS_SECRET_ARN is set; must match Deployment envFrom
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}  # Environment secret — pass explicitly
@@ -55,7 +55,9 @@ jobs:
 | `manifest_path`     | No       | _auto_                | kustomize dir or plain manifests in your repo (see below)          |
 | `namespace`         | No       | `environment`         | Kubernetes namespace to deploy into                                |
 | `aws_secret_arn`    | No       | _(empty)_             | Optional ARN override; prefer `secrets.AWS_SECRET_ARN`             |
-| `k8s_secret_name`   | No       | `nova-server-secrets` | Kubernetes Secret name (must match Deployment `envFrom`)           |
+| `k8s_secret_name`   | No*      | _(empty)_             | Kubernetes Secret name (must match Deployment `envFrom`)           |
+
+\*Required whenever `aws_secret_arn` / `AWS_SECRET_ARN` is set — the sync step fails closed with `K8S_SECRET_NAME resolved empty` if it's missing, rather than silently syncing under a name that may not match your Deployment.
 
 **Secrets:**
 
@@ -128,7 +130,7 @@ Set these in your repository's Settings > Environments > [environment] > Environ
 
 \*Pass explicitly: `secrets: { AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }} }`. If the caller job cannot resolve Environment secrets (no `environment:` with `uses:`), also add the same ARN as a **Repository** secret or Environment **variable**.
 
-When `aws_secret_arn` / `secrets.AWS_SECRET_ARN` / `vars.AWS_SECRET_ARN` is set, deploy syncs that **AWS Secrets Manager** secret into a **Kubernetes Secret** named `nova-server-secrets` by default before applying manifests. Your Deployment should use `envFrom.secretRef` with that name so pods receive the values at startup.
+When `aws_secret_arn` / `secrets.AWS_SECRET_ARN` / `vars.AWS_SECRET_ARN` is set, deploy syncs that **AWS Secrets Manager** secret into a **Kubernetes Secret** named by `k8s_secret_name` before applying manifests — you must set `k8s_secret_name` to match your Deployment's `envFrom.secretRef.name` (there is no default; the sync step fails closed if it's left empty).
 
 **Supported SecretString formats:**
 - JSON object: `{"MONGO_URI":"...","JWT_SECRET":"..."}`
