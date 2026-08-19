@@ -105,13 +105,6 @@ jobs:
           codeartifact-region: ${{ steps.aws.outputs.region }}
           codeartifact-namespace: ${{ inputs.codeartifact_namespace }}
 
-      - name: Compute version
-        id: version
-        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@development
-        with:
-          working-directory: ${{ inputs.package_directory }}
-          environment: ${{ inputs.environment }}
-
       - name: Lint
         if: inputs.lint_script != ''
         working-directory: ${{ inputs.app_path }}
@@ -126,6 +119,13 @@ jobs:
         if: inputs.build_script != ''
         working-directory: ${{ inputs.app_path }}
         run: npm run ${{ inputs.build_script }}
+
+      - name: Compute version
+        id: version
+        uses: Ennovative-Genix/sgx-github-actions/actions/compute-version@development
+        with:
+          working-directory: ${{ inputs.package_directory }}
+          environment: ${{ inputs.environment }}
 
       # Versioning and publishing both belong to the package, not to the app that
       # was built. In a workspace those are different directories, and running
