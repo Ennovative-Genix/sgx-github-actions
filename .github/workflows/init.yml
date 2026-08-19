@@ -228,16 +228,16 @@ jobs:
     needs: [validate-inputs, build-and-push]
     uses: ./.github/workflows/deploy-k8s.yml
     with:
-      environment: ${{ needs.validate-inputs.outputs.environment }}
-      env_region: ${{ needs.validate-inputs.outputs.env_region }}
-      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
-      image: ${{ needs.build-and-push.outputs.image }}
-      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
       container_name: ${{ needs.validate-inputs.outputs.container_name }}
+      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
+      env_region: ${{ needs.validate-inputs.outputs.env_region }}
+      environment: ${{ needs.validate-inputs.outputs.environment }}
+      image: ${{ needs.build-and-push.outputs.image }}
+      k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
       manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
-      aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
-      k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
@@ -248,16 +248,18 @@ jobs:
     if: ${{ needs.validate-inputs.outputs.k8s_type != 'EKS' }}
     uses: ./.github/workflows/deploy-k8s-kubeadm.yml
     with:
-      environment: ${{ needs.validate-inputs.outputs.environment }}
-      env_region: ${{ needs.validate-inputs.outputs.env_region }}
-      ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
-      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
-      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
       container_name: ${{ needs.validate-inputs.outputs.container_name }}
-      namespace: ${{ needs.validate-inputs.outputs.namespace }}
-      manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
+      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
+      ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
+      env_region: ${{ needs.validate-inputs.outputs.env_region }}
+      environment: ${{ needs.validate-inputs.outputs.environment }}
       k8s_api_host: ${{ needs.validate-inputs.outputs.k8s_api_host }}
+      manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
+      namespace: ${{ needs.validate-inputs.outputs.namespace }}
     secrets:
-      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
