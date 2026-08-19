@@ -62,12 +62,28 @@ on:
         required: false
         type: string
         default: ""
+      k8s_type:
+        description: "Kubernetes cluster type. EKS or Kubeadm. Defaults to EKS."
+        required: false
+        type: string
+        default: "EKS"
+      k8s_api_host:
+        description: "Private IP of the kube-apiserver for SSM port forwarding. Required for Kubeadm clusters."
+        required: false
+        type: string
+        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
         required: true
       AWS_SECRET_ARN:
         description: "Optional Secrets Manager ARN; pass from caller Environment secret and forward to deploy-k8s"
+        required: false
+      DEV_KUBE_CONFIG:
+        description: "Kubeconfig for Kubeadm cluster; pass from caller Environment secret and forward to deploy-k8s-kubeadm"
+        required: false
+      K8S_INSTANCE_ID:
+        description: "EC2 instance ID of the Kubeadm node; pass from caller Environment secret and forward to deploy-k8s-kubeadm"
         required: false
 
 concurrency:
@@ -101,6 +117,8 @@ jobs:
       namespace: ${{ steps.normalize.outputs.namespace }}
       aws_secret_arn: ${{ steps.normalize.outputs.aws_secret_arn }}
       k8s_secret_name: ${{ steps.normalize.outputs.k8s_secret_name }}
+      k8s_api_host: ${{ steps.normalize.outputs.k8s_api_host }}
+      k8s_type: ${{ steps.normalize.outputs.k8s_type }}
     steps:
       - name: Normalize and validate inputs
         id: normalize
@@ -117,6 +135,8 @@ jobs:
           NAMESPACE: ${{ inputs.namespace }}
           AWS_SECRET_ARN: ${{ inputs.aws_secret_arn }}
           K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
+          K8S_API_HOST: ${{ inputs.k8s_api_host }}
+          K8S_TYPE: ${{ inputs.k8s_type }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -137,6 +157,8 @@ jobs:
           NAMESPACE="$(trim "$NAMESPACE")"
           AWS_SECRET_ARN="$(trim "$AWS_SECRET_ARN")"
           K8S_SECRET_NAME="$(trim "$K8S_SECRET_NAME")"
+          K8S_API_HOST="$(trim "$K8S_API_HOST")"
+          K8S_TYPE="$(trim "$K8S_TYPE")"
 
           case "$ENVIRONMENT" in
             dev|qa|uat|stg|staging|preprod|prod) ;;
@@ -159,7 +181,14 @@ jobs:
             printf '%s' "$K8S_SECRET_NAME" | grep -Eq '^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$' \
               || fail "k8s_secret_name must be a valid DNS subdomain label (got '$K8S_SECRET_NAME')"
           fi
-
+          if [ -n "$K8S_API_HOST" ]; then
+            printf '%s' "$K8S_API_HOST" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' \
+              || fail "k8s_api_host must be a valid IPv4 address (got '$K8S_API_HOST')"
+          fi
+          if [ -n "$K8S_TYPE" ]; then
+            printf '%s' "$K8S_TYPE" | grep -Eq '^(EKS|Kubeadm)$' \
+              || fail "k8s_type must be either 'EKS' or 'Kubeadm' (got '$K8S_TYPE')"
+          fi
           {
             echo "environment=$ENVIRONMENT"
             echo "env_region=$ENV_REGION"
@@ -173,6 +202,8 @@ jobs:
             echo "namespace=$NAMESPACE"
             echo "aws_secret_arn=$AWS_SECRET_ARN"
             echo "k8s_secret_name=$K8S_SECRET_NAME"
+            echo "k8s_api_host=$K8S_API_HOST"
+            echo "k8s_type=$K8S_TYPE"
           } >> "$GITHUB_OUTPUT"
 
           echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
@@ -192,7 +223,8 @@ jobs:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
   deploy-k8s:
-    name: Deploy to Kubernetes
+    name: Deploy to Kubernetes (EKS)
+    if: ${{ needs.validate-inputs.outputs.k8s_type == 'EKS' }}
     needs: [validate-inputs, build-and-push]
     uses: ./.github/workflows/deploy-k8s.yml
     with:
@@ -209,3 +241,23 @@ jobs:
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
+
+  deploy-k8s-kubeadm:
+    name: Deploy to Kubernetes (Kubeadm)
+    needs: [validate-inputs, build-and-push]
+    if: ${{ needs.validate-inputs.outputs.k8s_type != 'EKS' }}
+    uses: ./.github/workflows/deploy-k8s-kubeadm.yml
+    with:
+      environment: ${{ needs.validate-inputs.outputs.environment }}
+      env_region: ${{ needs.validate-inputs.outputs.env_region }}
+      ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
+      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
+      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      container_name: ${{ needs.validate-inputs.outputs.container_name }}
+      namespace: ${{ needs.validate-inputs.outputs.namespace }}
+      manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
+      k8s_api_host: ${{ needs.validate-inputs.outputs.k8s_api_host }}
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+      K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
