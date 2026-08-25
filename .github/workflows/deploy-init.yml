@@ -38,13 +38,8 @@ on:
         description: "AWS Secrets Manager ARN"
         required: false
 jobs:
-  pre-build-cleanup:
-    name: Pre-Build Cleanup
-    uses: ./.github/workflows/prebuild-cleanup.yml
-
   build-and-upload:
     name: Build and Upload to S3
-    needs: pre-build-cleanup
     uses: ./.github/workflows/build-docker-s3.yml
     with:
       environment: ${{ inputs.environment }}
