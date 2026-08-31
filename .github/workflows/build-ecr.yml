@@ -114,8 +114,8 @@ jobs:
           # Self-contained apps leave docker_context empty → context == app_path.
           CONTEXT="${DOCKER_CONTEXT:-$APP_PATH}"
           echo "context=${CONTEXT}" >> "$GITHUB_OUTPUT"
-          echo "file=${APP_PATH}/Dockerfile" >> "$GITHUB_OUTPUT"
-          echo "Docker context='${CONTEXT}' file='${APP_PATH}/Dockerfile'"
+          echo "file=${APP_PATH}" >> "$GITHUB_OUTPUT"
+          echo "Docker context='${CONTEXT}' file='${APP_PATH}'"
 
       - name: Build and push image
         id: build
