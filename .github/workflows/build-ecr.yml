@@ -28,6 +28,31 @@ on:
         required: false
         type: string
         default: ""
+      dockerfile:
+        description: "Dockerfile path relative to repo root. Empty = <app_path>/Dockerfile."
+        required: false
+        type: string
+        default: ""
+      build_env:
+        description: "Docker ARG ENV. Empty = environment."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain:
+        description: "When set, mint a CodeArtifact token and pass secret id=codeartifact_token."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "CodeArtifact domain owner account id."
+        required: false
+        type: string
+        default: ""
+      codeartifact_region:
+        description: "CodeArtifact region (may differ from ECR env_region)."
+        required: false
+        type: string
+        default: "ap-south-1"
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs ECR push)"
@@ -58,7 +83,7 @@ jobs:
       ECR_REPOSITORY: ${{ inputs.ecr_repository != '' && inputs.ecr_repository || inputs.docker_image_name }}
     outputs:
       image: ${{ steps.image.outputs.image }}
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.build.outputs.digest || steps.build-ca.outputs.digest }}
       registry: ${{ steps.login-ecr.outputs.registry }}
 
     steps:
@@ -103,22 +128,50 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Get CodeArtifact authorization token
+        if: ${{ inputs.codeartifact_domain != '' }}
+        env:
+          CODEARTIFACT_DOMAIN: ${{ inputs.codeartifact_domain }}
+          CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact_domain_owner }}
+          CODEARTIFACT_REGION: ${{ inputs.codeartifact_region }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws codeartifact get-authorization-token \
+            --domain "${CODEARTIFACT_DOMAIN}" \
+            --domain-owner "${CODEARTIFACT_DOMAIN_OWNER}" \
+            --region "${CODEARTIFACT_REGION}" \
+            --query authorizationToken \
+            --output text)
+          echo "::add-mask::$TOKEN"
+          echo "CODEARTIFACT_AUTH_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
       - name: Resolve Docker context
         id: docker
         env:
           APP_PATH: ${{ inputs.app_path }}
           DOCKER_CONTEXT: ${{ inputs.docker_context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_ENV_INPUT: ${{ inputs.build_env }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
           # Monorepos (Nx, etc.) keep Dockerfile under app_path but COPY from repo root.
           # Self-contained apps leave docker_context empty → context == app_path.
           CONTEXT="${DOCKER_CONTEXT:-$APP_PATH}"
+          FILE="${DOCKERFILE:-${APP_PATH}/Dockerfile}"
+          BUILD_ENV="${BUILD_ENV_INPUT:-$ENVIRONMENT}"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::Dockerfile not found: ${FILE}"
+            exit 1
+          fi
           echo "context=${CONTEXT}" >> "$GITHUB_OUTPUT"
-          echo "file=${APP_PATH}/Dockerfile" >> "$GITHUB_OUTPUT"
-          echo "Docker context='${CONTEXT}' file='${APP_PATH}/Dockerfile'"
+          echo "file=${FILE}" >> "$GITHUB_OUTPUT"
+          echo "build_env=${BUILD_ENV}" >> "$GITHUB_OUTPUT"
+          echo "Docker context='${CONTEXT}' file='${FILE}' ENV='${BUILD_ENV}'"
 
       - name: Build and push image
         id: build
+        if: ${{ inputs.codeartifact_domain == '' }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ steps.docker.outputs.context }}
@@ -126,8 +179,25 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
-            ENV=${{ inputs.environment }}
+            ENV=${{ steps.docker.outputs.build_env }}
           # Single-platform, no provenance attestation → one clean manifest digest.
+          provenance: false
+          cache-from: type=gha,scope=${{ inputs.docker_image_name }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.docker_image_name }}
+
+      - name: Build and push image (CodeArtifact)
+        id: build-ca
+        if: ${{ inputs.codeartifact_domain != '' }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ${{ steps.docker.outputs.context }}
+          file: ${{ steps.docker.outputs.file }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            ENV=${{ steps.docker.outputs.build_env }}
+          secrets: |
+            codeartifact_token=${{ env.CODEARTIFACT_AUTH_TOKEN }}
           provenance: false
           cache-from: type=gha,scope=${{ inputs.docker_image_name }}
           cache-to: type=gha,mode=max,scope=${{ inputs.docker_image_name }}
@@ -136,7 +206,7 @@ jobs:
         id: image
         env:
           REPO_URI: ${{ steps.meta.outputs.repo_uri }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.build-ca.outputs.digest }}
         run: |
           set -euo pipefail
           echo "image=${REPO_URI}@${DIGEST}" >> "$GITHUB_OUTPUT"

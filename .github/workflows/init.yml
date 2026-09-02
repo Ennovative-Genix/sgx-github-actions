@@ -72,6 +72,31 @@ on:
         required: false
         type: string
         default: ""
+      dockerfile:
+        description: "Dockerfile path relative to repo root. Empty = <app_path>/Dockerfile."
+        required: false
+        type: string
+        default: ""
+      build_env:
+        description: "Docker ARG ENV. Empty = environment (uat/dev/prod)."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain:
+        description: "When set, mint a CodeArtifact token and pass BuildKit secret id=codeartifact_token. Empty = public npm/uv."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "AWS account that owns the CodeArtifact domain. Required when codeartifact_domain is set."
+        required: false
+        type: string
+        default: ""
+      codeartifact_region:
+        description: "CodeArtifact region. May differ from env_region (ECR). Default ap-south-1."
+        required: false
+        type: string
+        default: "ap-south-1"
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
@@ -119,6 +144,11 @@ jobs:
       k8s_secret_name: ${{ steps.normalize.outputs.k8s_secret_name }}
       k8s_api_host: ${{ steps.normalize.outputs.k8s_api_host }}
       k8s_type: ${{ steps.normalize.outputs.k8s_type }}
+      dockerfile: ${{ steps.normalize.outputs.dockerfile }}
+      build_env: ${{ steps.normalize.outputs.build_env }}
+      codeartifact_domain: ${{ steps.normalize.outputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ steps.normalize.outputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ steps.normalize.outputs.codeartifact_region }}
     steps:
       - name: Normalize and validate inputs
         id: normalize
@@ -137,6 +167,11 @@ jobs:
           K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
           K8S_API_HOST: ${{ inputs.k8s_api_host }}
           K8S_TYPE: ${{ inputs.k8s_type }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_ENV: ${{ inputs.build_env }}
+          CODEARTIFACT_DOMAIN: ${{ inputs.codeartifact_domain }}
+          CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact_domain_owner }}
+          CODEARTIFACT_REGION: ${{ inputs.codeartifact_region }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -159,6 +194,11 @@ jobs:
           K8S_SECRET_NAME="$(trim "$K8S_SECRET_NAME")"
           K8S_API_HOST="$(trim "$K8S_API_HOST")"
           K8S_TYPE="$(trim "$K8S_TYPE")"
+          DOCKERFILE="$(trim "$DOCKERFILE")"
+          BUILD_ENV="$(trim "$BUILD_ENV")"
+          CODEARTIFACT_DOMAIN="$(trim "$CODEARTIFACT_DOMAIN")"
+          CODEARTIFACT_DOMAIN_OWNER="$(trim "$CODEARTIFACT_DOMAIN_OWNER")"
+          CODEARTIFACT_REGION="$(trim "$CODEARTIFACT_REGION")"
 
           case "$ENVIRONMENT" in
             dev|qa|uat|stg|staging|preprod|prod) ;;
@@ -189,6 +229,24 @@ jobs:
             printf '%s' "$K8S_TYPE" | grep -Eq '^(EKS|Kubeadm)$' \
               || fail "k8s_type must be either 'EKS' or 'Kubeadm' (got '$K8S_TYPE')"
           fi
+          if [ -n "$DOCKERFILE" ]; then
+            printf '%s' "$DOCKERFILE" | grep -Eq '^[A-Za-z0-9._-][A-Za-z0-9._/-]*$' \
+              || fail "dockerfile must be a relative path (got '$DOCKERFILE')"
+          fi
+          if [ -n "$BUILD_ENV" ]; then
+            printf '%s' "$BUILD_ENV" | grep -Eq '^[A-Za-z0-9._-]+$' \
+              || fail "build_env must match ^[A-Za-z0-9._-]+$ (got '$BUILD_ENV')"
+          fi
+          if [ -n "$CODEARTIFACT_DOMAIN" ]; then
+            printf '%s' "$CODEARTIFACT_DOMAIN" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+              || fail "codeartifact_domain must be a CodeArtifact domain name (got '$CODEARTIFACT_DOMAIN')"
+            printf '%s' "$CODEARTIFACT_DOMAIN_OWNER" | grep -Eq '^[0-9]{12}$' \
+              || fail "codeartifact_domain_owner must be a 12-digit AWS account id when codeartifact_domain is set"
+          fi
+          if [ -n "$CODEARTIFACT_REGION" ]; then
+            printf '%s' "$CODEARTIFACT_REGION" | grep -Eq '^[a-z]{2}-[a-z]+-[0-9]+$' \
+              || fail "codeartifact_region must be an AWS region (got '$CODEARTIFACT_REGION')"
+          fi
           {
             echo "environment=$ENVIRONMENT"
             echo "env_region=$ENV_REGION"
@@ -204,6 +262,11 @@ jobs:
             echo "k8s_secret_name=$K8S_SECRET_NAME"
             echo "k8s_api_host=$K8S_API_HOST"
             echo "k8s_type=$K8S_TYPE"
+            echo "dockerfile=$DOCKERFILE"
+            echo "build_env=$BUILD_ENV"
+            echo "codeartifact_domain=$CODEARTIFACT_DOMAIN"
+            echo "codeartifact_domain_owner=$CODEARTIFACT_DOMAIN_OWNER"
+            echo "codeartifact_region=$CODEARTIFACT_REGION"
           } >> "$GITHUB_OUTPUT"
 
           echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
@@ -219,6 +282,11 @@ jobs:
       app_path: ${{ needs.validate-inputs.outputs.app_path }}
       docker_context: ${{ needs.validate-inputs.outputs.docker_context }}
       ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
+      dockerfile: ${{ needs.validate-inputs.outputs.dockerfile }}
+      build_env: ${{ needs.validate-inputs.outputs.build_env }}
+      codeartifact_domain: ${{ needs.validate-inputs.outputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ needs.validate-inputs.outputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ needs.validate-inputs.outputs.codeartifact_region }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
