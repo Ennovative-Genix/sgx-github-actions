@@ -338,6 +338,19 @@ jobs:
           echo "helm ${HELM_ARGS[*]}"
           helm "${HELM_ARGS[@]}"
 
+      - name: Wait for rollout
+        if: ${{ inputs.deploy_method == 'helm' }}
+        run: |
+          set -euo pipefail
+          if kubectl rollout status "deployment/${DEPLOYMENT_NAME}" -n "$NAMESPACE" --timeout=600s; then
+            echo "✓ Rollout complete for ${DEPLOYMENT_NAME} in ${NAMESPACE}"
+            exit 0
+          fi
+          echo "::error::Rollout did not become Ready for ${DEPLOYMENT_NAME} in ${NAMESPACE}"
+          echo "--- deployment ---"; kubectl describe "deployment/${DEPLOYMENT_NAME}" -n "$NAMESPACE" || true
+          echo "--- pods ---"; kubectl get pods -n "$NAMESPACE" -l "app=${DEPLOYMENT_NAME}" -o wide || true
+          exit 1
+
       - name: Resolve manifest path
         if: ${{ inputs.deploy_method != 'helm' }}
         id: manifests
