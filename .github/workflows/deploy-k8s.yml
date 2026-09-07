@@ -47,6 +47,27 @@ on:
         required: false
         type: string
         default: ""
+      deploy_method:
+        description: "helm or manifests"
+        required: false
+        type: string
+        default: "manifests"
+      product:
+        required: false
+        type: string
+        default: ""
+      service:
+        required: false
+        type: string
+        default: ""
+      chart:
+        required: false
+        type: string
+        default: "app"
+      charts_ref:
+        required: false
+        type: string
+        default: "k8s-helm"
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs eks:DescribeCluster + an EKS access entry)"
@@ -78,6 +99,11 @@ jobs:
       K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
       MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
       NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
+      DEPLOY_METHOD: ${{ inputs.deploy_method }}
+      PRODUCT: ${{ inputs.product }}
+      SERVICE: ${{ inputs.service }}
+      CHART: ${{ inputs.chart != '' && inputs.chart || 'app' }}
+      CHARTS_REF: ${{ inputs.charts_ref != '' && inputs.charts_ref || 'k8s-helm' }}
 
     steps:
       - name: Checkout repository
@@ -243,7 +269,77 @@ jobs:
 
           echo "✓ Kubernetes Secret/${K8S_NAME} synced (${KEY_COUNT} key(s); values not logged)"
 
+      - name: Checkout Helm charts and values
+        if: ${{ inputs.deploy_method == 'helm' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: Ennovative-Genix/sgx-github-actions
+          ref: ${{ env.CHARTS_REF }}
+          path: helm-src
+
+      - name: Set up Helm
+        if: ${{ inputs.deploy_method == 'helm' }}
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Adopt existing resources for Helm
+        if: ${{ inputs.deploy_method == 'helm' }}
+        env:
+          RELEASE: ${{ env.DEPLOYMENT_NAME }}
+        run: |
+          set -euo pipefail
+          adopt() {
+            local kind="$1" name="$2"
+            kubectl get "$kind" "$name" -n "$NAMESPACE" >/dev/null 2>&1 || return 0
+            kubectl annotate "$kind" "$name" -n "$NAMESPACE" \
+              meta.helm.sh/release-name="$RELEASE" \
+              meta.helm.sh/release-namespace="$NAMESPACE" \
+              --overwrite
+            kubectl label "$kind" "$name" -n "$NAMESPACE" \
+              app.kubernetes.io/managed-by=Helm \
+              --overwrite
+          }
+          adopt deployment "$RELEASE"
+          adopt service "$RELEASE"
+          adopt ingress "$RELEASE"
+          adopt hpa "$RELEASE"
+          adopt pdb "$RELEASE"
+          adopt configmap "${RELEASE}-config"
+
+      - name: Helm upgrade
+        if: ${{ inputs.deploy_method == 'helm' }}
+        env:
+          RELEASE: ${{ env.DEPLOYMENT_NAME }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="helm-src/environments/${ENVIRONMENT}.yaml"
+          APP_FILE="helm-src/values/${PRODUCT}/${SERVICE}/values.yaml"
+          OVERLAY="helm-src/values/${PRODUCT}/${SERVICE}/values-${ENVIRONMENT}.yaml"
+          CHART_DIR="helm-src/charts/${CHART}"
+          [ -d "$CHART_DIR" ] || { echo "::error::chart '$CHART_DIR' not found"; exit 1; }
+          [ -f "$ENV_FILE" ] || { echo "::error::missing $ENV_FILE"; exit 1; }
+          [ -f "$APP_FILE" ] || { echo "::error::missing $APP_FILE"; exit 1; }
+
+          SET_IMAGE=()
+          if [[ "$IMAGE" == *@sha256:* ]]; then
+            SET_IMAGE=(--set "image.repository=${IMAGE%@*}" --set "image.digest=${IMAGE#*@}" --set "image.tag=")
+          else
+            SET_IMAGE=(--set "image.repository=${IMAGE%:*}" --set "image.tag=${IMAGE##*:}" --set "image.digest=")
+          fi
+
+          HELM_ARGS=(upgrade --install "$RELEASE" "$CHART_DIR"
+            --namespace "$NAMESPACE" --create-namespace
+            -f "$ENV_FILE" -f "$APP_FILE")
+          if [ -f "$OVERLAY" ]; then
+            HELM_ARGS+=(-f "$OVERLAY")
+          fi
+          HELM_ARGS+=(--atomic --wait --timeout 5m "${SET_IMAGE[@]}")
+          echo "helm ${HELM_ARGS[*]}"
+          helm "${HELM_ARGS[@]}"
+
       - name: Resolve manifest path
+        if: ${{ inputs.deploy_method != 'helm' }}
         id: manifests
         run: |
           set -euo pipefail
@@ -265,6 +361,7 @@ jobs:
           echo "Using manifests at '$MP'"
 
       - name: Apply manifests and set image
+        if: ${{ inputs.deploy_method != 'helm' }}
         env:
           MP: ${{ steps.manifests.outputs.path }}
           MODE: ${{ steps.manifests.outputs.mode }}
@@ -286,6 +383,7 @@ jobs:
           echo "✓ Triggered rollout restart for deployment/${DEPLOYMENT_NAME}"
 
       - name: Wait for rollout (auto-rollback on failure)
+        if: ${{ inputs.deploy_method != 'helm' }}
         run: |
           set -euo pipefail
           if kubectl rollout status "deployment/${DEPLOYMENT_NAME}" -n "$NAMESPACE" --timeout=300s; then

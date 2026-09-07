@@ -72,6 +72,31 @@ on:
         required: false
         type: string
         default: ""
+      deploy_method:
+        description: "helm (charts in this repo) or manifests (kubectl apply in the consumer repo)."
+        required: false
+        type: string
+        default: "manifests"
+      product:
+        description: "values/<product>/<service>/ folder name. Required when deploy_method is helm."
+        required: false
+        type: string
+        default: ""
+      service:
+        description: "values/<product>/<service>/ folder name. Required when deploy_method is helm."
+        required: false
+        type: string
+        default: ""
+      chart:
+        description: "Chart directory under charts/. Default app."
+        required: false
+        type: string
+        default: "app"
+      charts_ref:
+        description: "Git ref of sgx-github-actions to check out for charts and values."
+        required: false
+        type: string
+        default: "k8s-helm"
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
@@ -119,6 +144,11 @@ jobs:
       k8s_secret_name: ${{ steps.normalize.outputs.k8s_secret_name }}
       k8s_api_host: ${{ steps.normalize.outputs.k8s_api_host }}
       k8s_type: ${{ steps.normalize.outputs.k8s_type }}
+      deploy_method: ${{ steps.normalize.outputs.deploy_method }}
+      product: ${{ steps.normalize.outputs.product }}
+      service: ${{ steps.normalize.outputs.service }}
+      chart: ${{ steps.normalize.outputs.chart }}
+      charts_ref: ${{ steps.normalize.outputs.charts_ref }}
     steps:
       - name: Normalize and validate inputs
         id: normalize
@@ -137,6 +167,11 @@ jobs:
           K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
           K8S_API_HOST: ${{ inputs.k8s_api_host }}
           K8S_TYPE: ${{ inputs.k8s_type }}
+          DEPLOY_METHOD: ${{ inputs.deploy_method }}
+          PRODUCT: ${{ inputs.product }}
+          SERVICE: ${{ inputs.service }}
+          CHART: ${{ inputs.chart }}
+          CHARTS_REF: ${{ inputs.charts_ref }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -159,6 +194,11 @@ jobs:
           K8S_SECRET_NAME="$(trim "$K8S_SECRET_NAME")"
           K8S_API_HOST="$(trim "$K8S_API_HOST")"
           K8S_TYPE="$(trim "$K8S_TYPE")"
+          DEPLOY_METHOD="$(trim "$DEPLOY_METHOD")"
+          PRODUCT="$(trim "$PRODUCT")"
+          SERVICE="$(trim "$SERVICE")"
+          CHART="$(trim "$CHART")"
+          CHARTS_REF="$(trim "$CHARTS_REF")"
 
           case "$ENVIRONMENT" in
             dev|qa|uat|stg|staging|preprod|prod) ;;
@@ -189,6 +229,23 @@ jobs:
             printf '%s' "$K8S_TYPE" | grep -Eq '^(EKS|Kubeadm)$' \
               || fail "k8s_type must be either 'EKS' or 'Kubeadm' (got '$K8S_TYPE')"
           fi
+          case "$DEPLOY_METHOD" in
+            helm|manifests|"") ;;
+            *) fail "deploy_method must be helm or manifests (got '$DEPLOY_METHOD')" ;;
+          esac
+          [ -n "$DEPLOY_METHOD" ] || DEPLOY_METHOD=manifests
+          [ -n "$CHART" ] || CHART=app
+          [ -n "$CHARTS_REF" ] || CHARTS_REF=k8s-helm
+          printf '%s' "$CHARTS_REF" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$' \
+            || fail "charts_ref must be a git ref (got '$CHARTS_REF')"
+          if [ "$DEPLOY_METHOD" = helm ]; then
+            printf '%s' "$PRODUCT" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+              || fail "product is required for helm (got '$PRODUCT')"
+            printf '%s' "$SERVICE" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+              || fail "service is required for helm (got '$SERVICE')"
+            printf '%s' "$CHART" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+              || fail "chart must match ^[a-z0-9][a-z0-9-]*$ (got '$CHART')"
+          fi
           {
             echo "environment=$ENVIRONMENT"
             echo "env_region=$ENV_REGION"
@@ -204,6 +261,11 @@ jobs:
             echo "k8s_secret_name=$K8S_SECRET_NAME"
             echo "k8s_api_host=$K8S_API_HOST"
             echo "k8s_type=$K8S_TYPE"
+            echo "deploy_method=$DEPLOY_METHOD"
+            echo "product=$PRODUCT"
+            echo "service=$SERVICE"
+            echo "chart=$CHART"
+            echo "charts_ref=$CHARTS_REF"
           } >> "$GITHUB_OUTPUT"
 
           echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
@@ -238,6 +300,11 @@ jobs:
       k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
       manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
+      deploy_method: ${{ needs.validate-inputs.outputs.deploy_method }}
+      product: ${{ needs.validate-inputs.outputs.product }}
+      service: ${{ needs.validate-inputs.outputs.service }}
+      chart: ${{ needs.validate-inputs.outputs.chart }}
+      charts_ref: ${{ needs.validate-inputs.outputs.charts_ref }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
@@ -259,6 +326,12 @@ jobs:
       k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
       manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
+      image: ${{ needs.build-and-push.outputs.image }}
+      deploy_method: ${{ needs.validate-inputs.outputs.deploy_method }}
+      product: ${{ needs.validate-inputs.outputs.product }}
+      service: ${{ needs.validate-inputs.outputs.service }}
+      chart: ${{ needs.validate-inputs.outputs.chart }}
+      charts_ref: ${{ needs.validate-inputs.outputs.charts_ref }}
     secrets:
       AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}

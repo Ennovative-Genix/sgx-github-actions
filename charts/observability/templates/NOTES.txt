@@ -1,0 +1,6 @@
+Prometheus, Grafana, and Loki.
+
+    helm dependency update charts/observability
+    helm upgrade --install obs charts/observability -n monitoring --create-namespace \
+      -f charts/observability/values.yaml \
+      -f values/observability/stack/values-dev.yaml

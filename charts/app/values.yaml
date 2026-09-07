@@ -1,0 +1,86 @@
+replicaCount: 1
+revisionHistoryLimit: 2
+fullnameOverride: ""
+nameOverride: ""
+
+image:
+  repository: ""
+  digest: ""
+  tag: ""
+  pullPolicy: Always
+
+imagePullSecrets: []
+
+containerPort: 80
+env: []
+
+envFrom:
+  secret: ""
+  configMap: ""
+
+configMap:
+  enabled: false
+  data: {}
+
+strategy: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: alb
+  path: /
+  pathType: Prefix
+  extraPaths: []
+  alb:
+    groupName: ""
+    groupOrder: "1"
+    scheme: internet-facing
+    targetType: ip
+    rewrite:
+      enabled: false
+      regex: ""
+      replace: ""
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+startupProbe: {}
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 70
+  behavior: {}
+
+pdb:
+  enabled: false
+  maxUnavailable: 1
+
+affinity: {}

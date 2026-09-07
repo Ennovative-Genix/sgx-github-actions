@@ -1,0 +1,64 @@
+fullnameOverride: nova-nestjs
+replicaCount: 1
+containerPort: 3000
+envFrom:
+  secret: nova-server-secrets
+service:
+  type: ClusterIP
+  port: 3000
+ingress:
+  path: /api/nova/service
+  pathType: Prefix
+  alb:
+    groupOrder: 8
+    rewrite:
+      enabled: true
+      regex: "^/api/nova/service/(.*)$"
+      replace: /$1
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: nova-nestjs
+          topologyKey: kubernetes.io/hostname
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+startupProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+autoscaling:
+  enabled: false

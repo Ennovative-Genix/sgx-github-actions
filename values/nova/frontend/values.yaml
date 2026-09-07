@@ -1,0 +1,57 @@
+fullnameOverride: nova-frontend
+replicaCount: 1
+containerPort: 80
+service:
+  type: ClusterIP
+  port: 80
+ingress:
+  path: /nova
+  pathType: Prefix
+  alb:
+    groupOrder: 31
+    rewrite:
+      enabled: true
+      regex: "^/nova/(.*)$"
+      replace: /$1
+readinessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+livenessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+autoscaling:
+  enabled: false
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: nova-frontend
+          topologyKey: kubernetes.io/hostname
+startupProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5

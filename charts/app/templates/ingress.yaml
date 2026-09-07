@@ -1,0 +1,61 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "app.fullname" . }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    alb.ingress.kubernetes.io/group.name: {{ .Values.ingress.alb.groupName | quote }}
+    alb.ingress.kubernetes.io/group.order: {{ .Values.ingress.alb.groupOrder | quote }}
+    alb.ingress.kubernetes.io/scheme: {{ .Values.ingress.alb.scheme }}
+    alb.ingress.kubernetes.io/target-type: {{ .Values.ingress.alb.targetType }}
+    alb.ingress.kubernetes.io/listen-ports: >
+      [{"HTTP":80},{"HTTPS":443}]
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: {{ if .Values.ingress.healthcheckPath }}{{ .Values.ingress.healthcheckPath | quote }}{{ else if and .Values.readinessProbe.httpGet .Values.readinessProbe.httpGet.path }}{{ .Values.readinessProbe.httpGet.path | quote }}{{ else }}"/"{{ end }}
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "5"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    {{- if .Values.ingress.alb.rewrite.enabled }}
+    alb.ingress.kubernetes.io/transforms.{{ include "app.fullname" . }}: >
+      [
+        {
+          "type":"url-rewrite",
+          "urlRewriteConfig":{
+            "rewrites":[
+              {
+                "regex":{{ .Values.ingress.alb.rewrite.regex | quote }},
+                "replace":{{ .Values.ingress.alb.rewrite.replace | quote }}
+              }
+            ]
+          }
+        }
+      ]
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "app.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+          {{- range .Values.ingress.extraPaths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ .serviceName }}
+                port:
+                  number: {{ .servicePort }}
+          {{- end }}
+{{- end }}

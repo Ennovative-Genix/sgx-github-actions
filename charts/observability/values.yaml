@@ -1,0 +1,39 @@
+# Override in values/observability/values-dev.yaml
+# After clone: helm dependency update charts/observability
+
+kube-prometheus-stack:
+  grafana:
+    enabled: true
+    ingress:
+      enabled: false
+  alertmanager:
+    enabled: false
+  prometheus:
+    prometheusSpec:
+      retention: 7d
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+
+loki:
+  deploymentMode: SingleBinary
+  loki:
+    auth_enabled: false
+    commonConfig:
+      replication_factor: 1
+    storage:
+      type: filesystem
+  singleBinary:
+    replicas: 1
+  backend:
+    replicas: 0
+  read:
+    replicas: 0
+  write:
+    replicas: 0
+  gateway:
+    enabled: false

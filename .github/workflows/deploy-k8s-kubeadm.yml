@@ -65,6 +65,38 @@ on:
         default: ""
         type: string
 
+      image:
+        description: "Fully-qualified ECR image (repo@sha256:...) from build-ecr.yml. Used when deploy_method is helm."
+        required: false
+        default: ""
+        type: string
+
+      deploy_method:
+        description: "helm or manifests"
+        required: false
+        default: "manifests"
+        type: string
+
+      product:
+        required: false
+        default: ""
+        type: string
+
+      service:
+        required: false
+        default: ""
+        type: string
+
+      chart:
+        required: false
+        default: "app"
+        type: string
+
+      charts_ref:
+        required: false
+        default: "k8s-helm"
+        type: string
+
     secrets:
       AWS_SECRET_ARN:
         required: false
@@ -97,12 +129,19 @@ jobs:
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
       ECR_REPOSITORY: ${{ inputs.ecr_repository != '' && inputs.ecr_repository || inputs.docker_image_name }}
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
-      K8S_API_HOST: ${{ inputs.k8s_api_host }}
+      K8S_API_HOST: ${{ inputs.k8s_api_host != '' && inputs.k8s_api_host || vars.K8S_API_HOST || secrets.K8S_API_HOST }}
       K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
       K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
       K8S_TUNNEL_LOCAL_PORT: 8443
       MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
       NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      IMAGE: ${{ inputs.image }}
+      DEPLOY_METHOD: ${{ inputs.deploy_method }}
+      PRODUCT: ${{ inputs.product }}
+      SERVICE: ${{ inputs.service }}
+      CHART: ${{ inputs.chart != '' && inputs.chart || 'app' }}
+      CHARTS_REF: ${{ inputs.charts_ref != '' && inputs.charts_ref || 'k8s-helm' }}
 
     steps:
       - name: Checkout Repository
@@ -287,7 +326,81 @@ jobs:
 
           echo "✓ Kubernetes Secret/${K8S_NAME} synced (${KEY_COUNT} key(s); values not logged)"
 
+      - name: Checkout Helm charts and values
+        if: ${{ inputs.deploy_method == 'helm' }}
+        uses: actions/checkout@v4
+        with:
+          repository: Ennovative-Genix/sgx-github-actions
+          ref: ${{ env.CHARTS_REF }}
+          path: helm-src
+
+      - name: Set up Helm
+        if: ${{ inputs.deploy_method == 'helm' }}
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Adopt existing resources for Helm
+        if: ${{ inputs.deploy_method == 'helm' }}
+        env:
+          RELEASE: ${{ env.DEPLOYMENT_NAME }}
+        run: |
+          set -euo pipefail
+          adopt() {
+            local kind="$1" name="$2"
+            kubectl get "$kind" "$name" -n "$NAMESPACE" >/dev/null 2>&1 || return 0
+            kubectl annotate "$kind" "$name" -n "$NAMESPACE" \
+              meta.helm.sh/release-name="$RELEASE" \
+              meta.helm.sh/release-namespace="$NAMESPACE" \
+              --overwrite
+            kubectl label "$kind" "$name" -n "$NAMESPACE" \
+              app.kubernetes.io/managed-by=Helm \
+              --overwrite
+          }
+          adopt deployment "$RELEASE"
+          adopt service "$RELEASE"
+          adopt ingress "$RELEASE"
+          adopt hpa "$RELEASE"
+          adopt pdb "$RELEASE"
+          adopt configmap "${RELEASE}-config"
+
+      - name: Helm upgrade
+        if: ${{ inputs.deploy_method == 'helm' }}
+        env:
+          RELEASE: ${{ env.DEPLOYMENT_NAME }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="helm-src/environments/${ENVIRONMENT}.yaml"
+          APP_FILE="helm-src/values/${PRODUCT}/${SERVICE}/values.yaml"
+          OVERLAY="helm-src/values/${PRODUCT}/${SERVICE}/values-${ENVIRONMENT}.yaml"
+          CHART_DIR="helm-src/charts/${CHART}"
+          [ -d "$CHART_DIR" ] || { echo "::error::chart '$CHART_DIR' not found"; exit 1; }
+          [ -f "$ENV_FILE" ] || { echo "::error::missing $ENV_FILE"; exit 1; }
+          [ -f "$APP_FILE" ] || { echo "::error::missing $APP_FILE"; exit 1; }
+
+          SET_IMAGE=()
+          if [ -n "${IMAGE:-}" ]; then
+            if [[ "$IMAGE" == *@sha256:* ]]; then
+              SET_IMAGE=(--set "image.repository=${IMAGE%@*}" --set "image.digest=${IMAGE#*@}" --set "image.tag=")
+            else
+              SET_IMAGE=(--set "image.repository=${IMAGE%:*}" --set "image.tag=${IMAGE##*:}" --set "image.digest=")
+            fi
+          else
+            SET_IMAGE=(--set "image.repository=${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}" --set "image.tag=${{ github.sha }}")
+          fi
+
+          HELM_ARGS=(upgrade --install "$RELEASE" "$CHART_DIR"
+            --namespace "$NAMESPACE" --create-namespace
+            -f "$ENV_FILE" -f "$APP_FILE")
+          if [ -f "$OVERLAY" ]; then
+            HELM_ARGS+=(-f "$OVERLAY")
+          fi
+          HELM_ARGS+=(--atomic --wait --timeout 5m "${SET_IMAGE[@]}")
+          echo "helm ${HELM_ARGS[*]}"
+          helm "${HELM_ARGS[@]}"
+
       - name: Resolve manifest path
+        if: ${{ inputs.deploy_method != 'helm' }}
         id: manifests
         run: |
           set -euo pipefail
@@ -311,6 +424,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
 
       - name: Apply Kubernetes Manifests
+        if: ${{ inputs.deploy_method != 'helm' }}
         env:
           MP: ${{ steps.manifests.outputs.path }}
           MODE: ${{ steps.manifests.outputs.mode }}
@@ -329,6 +443,7 @@ jobs:
           kubectl get pods -n ${NAMESPACE}
 
       - name: Update Deployment Image
+        if: ${{ inputs.deploy_method != 'helm' }}
         env:
           IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
         run: |
@@ -347,6 +462,7 @@ jobs:
             -o wide
 
       - name: Wait For Rollout
+        if: ${{ inputs.deploy_method != 'helm' }}
         run: |
           kubectl rollout status deployment/${DEPLOYMENT_NAME} \
             -n ${NAMESPACE} \

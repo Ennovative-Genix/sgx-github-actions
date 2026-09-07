@@ -1,0 +1,7 @@
+ingress:
+  enabled: true
+  className: alb
+  alb:
+    groupName: qa-shared-apps-alb
+    scheme: internet-facing
+    targetType: ip
