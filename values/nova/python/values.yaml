@@ -1,0 +1,49 @@
+fullnameOverride: nova-python
+replicaCount: 1
+containerPort: 8000
+envFrom:
+  secret: nova-python-secrets
+env:
+  - name: LOG_FORMAT
+    value: json
+  - name: LOG_TO_FILE
+    value: "false"
+  - name: API_ALIAS_PATH
+    value: /api/nova/ai
+service:
+  type: ClusterIP
+  port: 80
+ingress:
+  path: /api/nova/ai
+  pathType: Prefix
+  alb:
+    groupOrder: 9
+    rewrite:
+      enabled: true
+      regex: "^/api/nova/ai/(.*)$"
+      replace: /$1
+resources:
+  requests:
+    cpu: 450m
+    memory: 250Mi
+  limits:
+    cpu: 900m
+    memory: 1500Mi
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 10
+  failureThreshold: 5
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 60
+  periodSeconds: 20
+  timeoutSeconds: 10
+  failureThreshold: 3
+autoscaling:
+  enabled: false
