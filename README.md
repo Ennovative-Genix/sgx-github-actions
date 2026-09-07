@@ -74,7 +74,8 @@ Resolution order in deploy: `inputs.aws_secret_arn` → `secrets.AWS_SECRET_ARN`
 
 1. **Validate inputs** - Fails closed before any AWS credentials are assumed if `environment` isn't `dev`/`uat`/`prod` or `docker_image_name`/`app_path` contain unexpected characters.
 2. **Build and Push to ECR** (`build-ecr.yml`) - OIDC → ECR login → Buildx build (with `ENV=<environment>` build arg and a `type=gha` layer cache) → `docker push`. Tags the immutable `:<git-sha>` (the deploy handle) and a moving `:<environment>` tag. Only changed layers are transferred. Outputs a digest-pinned image reference.
-3. **Deploy to Kubernetes** (`deploy-k8s.yml`) - OIDC → SSM tunnel (private EKS) → optional **Secrets Manager ARN → Kubernetes Secret sync** → `kubectl apply` → `kubectl set image` (digest-pinned) → `kubectl rollout status` with **automatic rollback** on failure.
+3. **Deploy to Kubernetes** (`deploy-k8s.yml` / `deploy-k8s-kubeadm.yml`) - OIDC → SSM tunnel → optional **Secrets Manager ARN → Kubernetes Secret sync** → `kubectl apply` → `kubectl set image` → `kubectl rollout status` with **automatic rollback** on failure (EKS).
+4. **Refresh secrets** (last job; always runs when `k8s_secret_name` is set) - `refresh-secrets-eks` / `refresh-secrets-kubeadm`. Does **not** need the ECR build. Syncs Secrets Manager → Kubernetes Secret, then `kubectl rollout restart` without changing the running image. After updating AWS Secrets Manager, open the last successful run → **Refresh secrets** → **Re-run job** (do not start a new workflow). GitHub only re-runs this job plus validate, not build/deploy.
 
 > Runs are serialized per `environment` + `docker_image_name` via a `concurrency` group, so two deploys to the same target won't race.
 
