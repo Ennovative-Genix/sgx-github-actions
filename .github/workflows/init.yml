@@ -264,3 +264,48 @@ jobs:
       DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
       K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
+
+  # Last job: always runs on services that use a K8s Secret. Does not need the
+  # ECR build, so it can be re-run alone from a previous successful pipeline
+  # (Actions → job → Re-run job) after AWS Secrets Manager is updated.
+  # Must not need deploy/build: GitHub re-runs every job in `needs`.
+  refresh-secrets-eks:
+    name: Refresh secrets (EKS)
+    if: ${{ needs.validate-inputs.outputs.k8s_type == 'EKS' && needs.validate-inputs.outputs.k8s_secret_name != '' }}
+    needs: [validate-inputs]
+    uses: ./.github/workflows/deploy-k8s.yml
+    with:
+      aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
+      container_name: ${{ needs.validate-inputs.outputs.container_name }}
+      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
+      env_region: ${{ needs.validate-inputs.outputs.env_region }}
+      environment: ${{ needs.validate-inputs.outputs.environment }}
+      k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
+      namespace: ${{ needs.validate-inputs.outputs.namespace }}
+      refresh_secrets: true
+    secrets:
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
+
+  refresh-secrets-kubeadm:
+    name: Refresh secrets (Kubeadm)
+    if: ${{ needs.validate-inputs.outputs.k8s_type != 'EKS' && needs.validate-inputs.outputs.k8s_secret_name != '' }}
+    needs: [validate-inputs]
+    uses: ./.github/workflows/deploy-k8s-kubeadm.yml
+    with:
+      aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
+      container_name: ${{ needs.validate-inputs.outputs.container_name }}
+      deployment_name: ${{ needs.validate-inputs.outputs.deployment_name }}
+      docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
+      env_region: ${{ needs.validate-inputs.outputs.env_region }}
+      environment: ${{ needs.validate-inputs.outputs.environment }}
+      k8s_api_host: ${{ needs.validate-inputs.outputs.k8s_api_host }}
+      k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
+      namespace: ${{ needs.validate-inputs.outputs.namespace }}
+      refresh_secrets: true
+    secrets:
+      AWS_SECRET_ARN: ${{ secrets.AWS_SECRET_ARN }}
+      DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+      IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
+      K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}

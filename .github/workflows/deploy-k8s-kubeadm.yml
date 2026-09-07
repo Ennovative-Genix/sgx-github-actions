@@ -65,6 +65,12 @@ on:
         default: ""
         type: string
 
+      refresh_secrets:
+        description: "Sync AWS Secrets Manager into the Kubernetes Secret and restart pods. Skip apply/set-image (keeps the running image)."
+        required: false
+        default: false
+        type: boolean
+
     secrets:
       AWS_SECRET_ARN:
         required: false
@@ -116,6 +122,7 @@ jobs:
           role-session-name: GitHubActions-${{ github.run_id }}
 
       - name: Login to Amazon ECR
+        if: ${{ !inputs.refresh_secrets }}
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
@@ -205,6 +212,13 @@ jobs:
           kubectl get namespace ${NAMESPACE} >/dev/null 2>&1 || \
           kubectl create namespace ${NAMESPACE}
 
+      - name: Require AWS secret for refresh
+        if: ${{ inputs.refresh_secrets }}
+        run: |
+          set -euo pipefail
+          [ -n "$AWS_SECRET_ARN" ] || { echo "::error::refresh_secrets requires AWS_SECRET_ARN"; exit 1; }
+          [ -n "$K8S_SECRET_NAME" ] || { echo "::error::refresh_secrets requires k8s_secret_name"; exit 1; }
+
       - name: Sync app secret from AWS Secrets Manager
         if: ${{ env.AWS_SECRET_ARN != '' }}
         run: |
@@ -288,6 +302,7 @@ jobs:
           echo "✓ Kubernetes Secret/${K8S_NAME} synced (${KEY_COUNT} key(s); values not logged)"
 
       - name: Resolve manifest path
+        if: ${{ !inputs.refresh_secrets }}
         id: manifests
         run: |
           set -euo pipefail
@@ -311,6 +326,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
 
       - name: Apply Kubernetes Manifests
+        if: ${{ !inputs.refresh_secrets }}
         env:
           MP: ${{ steps.manifests.outputs.path }}
           MODE: ${{ steps.manifests.outputs.mode }}
@@ -329,6 +345,7 @@ jobs:
           kubectl get pods -n ${NAMESPACE}
 
       - name: Update Deployment Image
+        if: ${{ !inputs.refresh_secrets }}
         env:
           IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
         run: |
@@ -346,7 +363,23 @@ jobs:
             -n ${NAMESPACE} \
             -o wide
 
+      - name: Restart pods to load synced secrets
+        if: ${{ inputs.refresh_secrets }}
+        run: |
+          set -euo pipefail
+          # This job runs in parallel with build/deploy and can be re-run later
+          # without them. On a first deploy the Deployment may not exist yet.
+          if ! kubectl get "deployment/${DEPLOYMENT_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+            echo "Deployment/${DEPLOYMENT_NAME} not found yet (first deploy still applying). Skipping restart; re-run this job after AWS Secrets Manager changes."
+            exit 0
+          fi
+          kubectl rollout restart "deployment/${DEPLOYMENT_NAME}" -n "${NAMESPACE}"
+          echo "✓ Triggered rollout restart for deployment/${DEPLOYMENT_NAME} (secrets refresh; image unchanged)"
+          kubectl rollout status "deployment/${DEPLOYMENT_NAME}" -n "${NAMESPACE}" --timeout=300s
+          echo "✓ Rollout complete for ${DEPLOYMENT_NAME} in ${NAMESPACE}"
+
       - name: Wait For Rollout
+        if: ${{ !inputs.refresh_secrets }}
         run: |
           kubectl rollout status deployment/${DEPLOYMENT_NAME} \
             -n ${NAMESPACE} \
