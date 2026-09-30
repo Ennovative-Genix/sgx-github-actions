@@ -72,6 +72,16 @@ on:
         required: false
         type: string
         default: ""
+      dockerfile:
+        description: "Dockerfile path relative to repo root. Empty = <app_path>/Dockerfile."
+        required: false
+        type: string
+        default: ""
+      build_env:
+        description: "Docker ARG ENV. Empty = environment (dev/qa/stg/prod)."
+        required: false
+        type: string
+        default: ""
       deploy_method:
         description: "helm (charts in this repo) or manifests (kubectl apply in the consumer repo)."
         required: false
@@ -144,6 +154,8 @@ jobs:
       k8s_secret_name: ${{ steps.normalize.outputs.k8s_secret_name }}
       k8s_api_host: ${{ steps.normalize.outputs.k8s_api_host }}
       k8s_type: ${{ steps.normalize.outputs.k8s_type }}
+      dockerfile: ${{ steps.normalize.outputs.dockerfile }}
+      build_env: ${{ steps.normalize.outputs.build_env }}
       deploy_method: ${{ steps.normalize.outputs.deploy_method }}
       product: ${{ steps.normalize.outputs.product }}
       service: ${{ steps.normalize.outputs.service }}
@@ -167,6 +179,8 @@ jobs:
           K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
           K8S_API_HOST: ${{ inputs.k8s_api_host }}
           K8S_TYPE: ${{ inputs.k8s_type }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_ENV: ${{ inputs.build_env }}
           DEPLOY_METHOD: ${{ inputs.deploy_method }}
           PRODUCT: ${{ inputs.product }}
           SERVICE: ${{ inputs.service }}
@@ -194,6 +208,8 @@ jobs:
           K8S_SECRET_NAME="$(trim "$K8S_SECRET_NAME")"
           K8S_API_HOST="$(trim "$K8S_API_HOST")"
           K8S_TYPE="$(trim "$K8S_TYPE")"
+          DOCKERFILE="$(trim "$DOCKERFILE")"
+          BUILD_ENV="$(trim "$BUILD_ENV")"
           DEPLOY_METHOD="$(trim "$DEPLOY_METHOD")"
           PRODUCT="$(trim "$PRODUCT")"
           SERVICE="$(trim "$SERVICE")"
@@ -229,6 +245,14 @@ jobs:
             printf '%s' "$K8S_TYPE" | grep -Eq '^(EKS|Kubeadm)$' \
               || fail "k8s_type must be either 'EKS' or 'Kubeadm' (got '$K8S_TYPE')"
           fi
+          if [ -n "$DOCKERFILE" ]; then
+            printf '%s' "$DOCKERFILE" | grep -Eq '^[A-Za-z0-9._-][A-Za-z0-9._/-]*$' \
+              || fail "dockerfile must be a relative path (got '$DOCKERFILE')"
+          fi
+          if [ -n "$BUILD_ENV" ]; then
+            printf '%s' "$BUILD_ENV" | grep -Eq '^[A-Za-z0-9._-]+$' \
+              || fail "build_env must match ^[A-Za-z0-9._-]+$ (got '$BUILD_ENV')"
+          fi
           case "$DEPLOY_METHOD" in
             helm|manifests|"") ;;
             *) fail "deploy_method must be helm or manifests (got '$DEPLOY_METHOD')" ;;
@@ -261,6 +285,8 @@ jobs:
             echo "k8s_secret_name=$K8S_SECRET_NAME"
             echo "k8s_api_host=$K8S_API_HOST"
             echo "k8s_type=$K8S_TYPE"
+            echo "dockerfile=$DOCKERFILE"
+            echo "build_env=$BUILD_ENV"
             echo "deploy_method=$DEPLOY_METHOD"
             echo "product=$PRODUCT"
             echo "service=$SERVICE"
@@ -281,6 +307,8 @@ jobs:
       app_path: ${{ needs.validate-inputs.outputs.app_path }}
       docker_context: ${{ needs.validate-inputs.outputs.docker_context }}
       ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
+      dockerfile: ${{ needs.validate-inputs.outputs.dockerfile }}
+      build_env: ${{ needs.validate-inputs.outputs.build_env }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 

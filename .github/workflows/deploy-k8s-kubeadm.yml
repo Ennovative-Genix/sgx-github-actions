@@ -362,7 +362,6 @@ jobs:
           adopt ingress "$RELEASE"
           adopt hpa "$RELEASE"
           adopt pdb "$RELEASE"
-          adopt configmap "${RELEASE}-config"
 
       - name: Helm upgrade
         if: ${{ inputs.deploy_method == 'helm' }}

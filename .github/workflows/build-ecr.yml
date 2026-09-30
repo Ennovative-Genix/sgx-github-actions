@@ -28,6 +28,16 @@ on:
         required: false
         type: string
         default: ""
+      dockerfile:
+        description: "Dockerfile path relative to repo root. Empty = <app_path>/Dockerfile."
+        required: false
+        type: string
+        default: ""
+      build_env:
+        description: "Docker ARG ENV. Empty = environment."
+        required: false
+        type: string
+        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs ECR push)"
@@ -108,14 +118,24 @@ jobs:
         env:
           APP_PATH: ${{ inputs.app_path }}
           DOCKER_CONTEXT: ${{ inputs.docker_context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_ENV_INPUT: ${{ inputs.build_env }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
           # Monorepos (Nx, etc.) keep Dockerfile under app_path but COPY from repo root.
           # Self-contained apps leave docker_context empty → context == app_path.
           CONTEXT="${DOCKER_CONTEXT:-$APP_PATH}"
+          FILE="${DOCKERFILE:-${APP_PATH}/Dockerfile}"
+          BUILD_ENV="${BUILD_ENV_INPUT:-$ENVIRONMENT}"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::Dockerfile not found: ${FILE}"
+            exit 1
+          fi
           echo "context=${CONTEXT}" >> "$GITHUB_OUTPUT"
-          echo "file=${APP_PATH}/Dockerfile" >> "$GITHUB_OUTPUT"
-          echo "Docker context='${CONTEXT}' file='${APP_PATH}/Dockerfile'"
+          echo "file=${FILE}" >> "$GITHUB_OUTPUT"
+          echo "build_env=${BUILD_ENV}" >> "$GITHUB_OUTPUT"
+          echo "Docker context='${CONTEXT}' file='${FILE}' ENV='${BUILD_ENV}'"
 
       - name: Build and push image
         id: build
@@ -126,7 +146,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
-            ENV=${{ inputs.environment }}
+            ENV=${{ steps.docker.outputs.build_env }}
           # Single-platform, no provenance attestation → one clean manifest digest.
           provenance: false
           cache-from: type=gha,scope=${{ inputs.docker_image_name }}
