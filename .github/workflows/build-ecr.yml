@@ -38,6 +38,21 @@ on:
         required: false
         type: string
         default: ""
+      codeartifact_domain:
+        description: "CodeArtifact domain. Empty skips the token."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "AWS account ID that owns the CodeArtifact domain."
+        required: false
+        type: string
+        default: ""
+      codeartifact_region:
+        description: "Region of the CodeArtifact domain."
+        required: false
+        type: string
+        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (needs ECR push)"
@@ -93,6 +108,21 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@b040164c4934333d597f3f9c67502ff28f814e9c # v2.1.6
 
+      - name: Get CodeArtifact authorization token
+        if: ${{ inputs.codeartifact_domain != '' }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws codeartifact get-authorization-token \
+            --domain "${{ inputs.codeartifact_domain }}" \
+            --domain-owner "${{ inputs.codeartifact_domain_owner }}" \
+            --region "${{ inputs.codeartifact_region }}" \
+            --query authorizationToken \
+            --output text)
+          echo "::add-mask::$TOKEN"
+          TOKEN_FILE="$RUNNER_TEMP/codeartifact_token"
+          printf '%s' "$TOKEN" > "$TOKEN_FILE"
+          echo "CODEARTIFACT_SECRET_FILE=$TOKEN_FILE" >> "$GITHUB_ENV"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
@@ -147,6 +177,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             ENV=${{ steps.docker.outputs.build_env }}
+          # BuildKit secret id matches Dockerfiles that mount id=codeartifact_token.
+          # Omitted when codeartifact_domain is empty, so public-registry builds are unchanged.
+          secret-files: ${{ env.CODEARTIFACT_SECRET_FILE != '' && format('codeartifact_token={0}', env.CODEARTIFACT_SECRET_FILE) || '' }}
           # Single-platform, no provenance attestation → one clean manifest digest.
           provenance: false
           cache-from: type=gha,scope=${{ inputs.docker_image_name }}

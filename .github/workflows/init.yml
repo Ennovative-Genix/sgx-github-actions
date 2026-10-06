@@ -42,11 +42,6 @@ on:
         required: false
         type: string
         default: ""
-      manifest_path:
-        description: "Path to a kustomize dir or plain manifests in the consumer repo. Auto-detected if empty."
-        required: false
-        type: string
-        default: ""
       namespace:
         description: "Kubernetes namespace. Defaults to the environment name."
         required: false
@@ -83,17 +78,17 @@ on:
         type: string
         default: ""
       deploy_method:
-        description: "helm (charts in this repo) or manifests (kubectl apply in the consumer repo)."
+        description: "Helm only. Charts and values are checked out from charts_ref."
         required: false
         type: string
-        default: "manifests"
+        default: "helm"
       product:
-        description: "values/<product>/<service>/ folder name. Required when deploy_method is helm."
+        description: "values/<product>/<service>/ folder name. Required."
         required: false
         type: string
         default: ""
       service:
-        description: "values/<product>/<service>/ folder name. Required when deploy_method is helm."
+        description: "values/<product>/<service>/ folder name. Required."
         required: false
         type: string
         default: ""
@@ -107,6 +102,21 @@ on:
         required: false
         type: string
         default: "k8s-helm"
+      codeartifact_domain:
+        description: "CodeArtifact domain. Empty skips the token. Set for images whose Dockerfile mounts secret id=codeartifact_token."
+        required: false
+        type: string
+        default: ""
+      codeartifact_domain_owner:
+        description: "AWS account ID that owns the CodeArtifact domain. Required when codeartifact_domain is set."
+        required: false
+        type: string
+        default: ""
+      codeartifact_region:
+        description: "Region of the CodeArtifact domain. Often ap-south-1 even when ECR is in another region."
+        required: false
+        type: string
+        default: ""
     secrets:
       IAM_ROLE_ARN:
         description: "AWS IAM Role ARN for OIDC authentication (ECR push + EKS access)"
@@ -148,7 +158,6 @@ jobs:
       ecr_repository: ${{ steps.normalize.outputs.ecr_repository }}
       deployment_name: ${{ steps.normalize.outputs.deployment_name }}
       container_name: ${{ steps.normalize.outputs.container_name }}
-      manifest_path: ${{ steps.normalize.outputs.manifest_path }}
       namespace: ${{ steps.normalize.outputs.namespace }}
       aws_secret_arn: ${{ steps.normalize.outputs.aws_secret_arn }}
       k8s_secret_name: ${{ steps.normalize.outputs.k8s_secret_name }}
@@ -161,6 +170,9 @@ jobs:
       service: ${{ steps.normalize.outputs.service }}
       chart: ${{ steps.normalize.outputs.chart }}
       charts_ref: ${{ steps.normalize.outputs.charts_ref }}
+      codeartifact_domain: ${{ steps.normalize.outputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ steps.normalize.outputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ steps.normalize.outputs.codeartifact_region }}
     steps:
       - name: Normalize and validate inputs
         id: normalize
@@ -173,7 +185,6 @@ jobs:
           ECR_REPOSITORY: ${{ inputs.ecr_repository }}
           DEPLOYMENT_NAME: ${{ inputs.deployment_name }}
           CONTAINER_NAME: ${{ inputs.container_name }}
-          MANIFEST_PATH: ${{ inputs.manifest_path }}
           NAMESPACE: ${{ inputs.namespace }}
           AWS_SECRET_ARN: ${{ inputs.aws_secret_arn }}
           K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
@@ -186,6 +197,9 @@ jobs:
           SERVICE: ${{ inputs.service }}
           CHART: ${{ inputs.chart }}
           CHARTS_REF: ${{ inputs.charts_ref }}
+          CODEARTIFACT_DOMAIN: ${{ inputs.codeartifact_domain }}
+          CODEARTIFACT_DOMAIN_OWNER: ${{ inputs.codeartifact_domain_owner }}
+          CODEARTIFACT_REGION: ${{ inputs.codeartifact_region }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -202,7 +216,6 @@ jobs:
           ECR_REPOSITORY="$(trim "$ECR_REPOSITORY")"
           DEPLOYMENT_NAME="$(trim "$DEPLOYMENT_NAME")"
           CONTAINER_NAME="$(trim "$CONTAINER_NAME")"
-          MANIFEST_PATH="$(trim "$MANIFEST_PATH")"
           NAMESPACE="$(trim "$NAMESPACE")"
           AWS_SECRET_ARN="$(trim "$AWS_SECRET_ARN")"
           K8S_SECRET_NAME="$(trim "$K8S_SECRET_NAME")"
@@ -215,6 +228,9 @@ jobs:
           SERVICE="$(trim "$SERVICE")"
           CHART="$(trim "$CHART")"
           CHARTS_REF="$(trim "$CHARTS_REF")"
+          CODEARTIFACT_DOMAIN="$(trim "$CODEARTIFACT_DOMAIN")"
+          CODEARTIFACT_DOMAIN_OWNER="$(trim "$CODEARTIFACT_DOMAIN_OWNER")"
+          CODEARTIFACT_REGION="$(trim "$CODEARTIFACT_REGION")"
 
           case "$ENVIRONMENT" in
             dev|qa|uat|stg|staging|preprod|prod) ;;
@@ -254,21 +270,27 @@ jobs:
               || fail "build_env must match ^[A-Za-z0-9._-]+$ (got '$BUILD_ENV')"
           fi
           case "$DEPLOY_METHOD" in
-            helm|manifests|"") ;;
-            *) fail "deploy_method must be helm or manifests (got '$DEPLOY_METHOD')" ;;
+            helm|"") ;;
+            *) fail "deploy_method must be helm (got '$DEPLOY_METHOD')" ;;
           esac
-          [ -n "$DEPLOY_METHOD" ] || DEPLOY_METHOD=manifests
+          [ -n "$DEPLOY_METHOD" ] || DEPLOY_METHOD=helm
           [ -n "$CHART" ] || CHART=app
           [ -n "$CHARTS_REF" ] || CHARTS_REF=k8s-helm
           printf '%s' "$CHARTS_REF" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$' \
             || fail "charts_ref must be a git ref (got '$CHARTS_REF')"
-          if [ "$DEPLOY_METHOD" = helm ]; then
-            printf '%s' "$PRODUCT" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
-              || fail "product is required for helm (got '$PRODUCT')"
-            printf '%s' "$SERVICE" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
-              || fail "service is required for helm (got '$SERVICE')"
-            printf '%s' "$CHART" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
-              || fail "chart must match ^[a-z0-9][a-z0-9-]*$ (got '$CHART')"
+          printf '%s' "$PRODUCT" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+            || fail "product is required (got '$PRODUCT')"
+          printf '%s' "$SERVICE" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+            || fail "service is required (got '$SERVICE')"
+          printf '%s' "$CHART" | grep -Eq '^[a-z0-9][a-z0-9-]*$' \
+            || fail "chart must match ^[a-z0-9][a-z0-9-]*$ (got '$CHART')"
+          if [ -n "$CODEARTIFACT_DOMAIN$CODEARTIFACT_DOMAIN_OWNER$CODEARTIFACT_REGION" ]; then
+            printf '%s' "$CODEARTIFACT_DOMAIN" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9-]{0,49}$' \
+              || fail "codeartifact_domain must be a CodeArtifact domain (got '$CODEARTIFACT_DOMAIN')"
+            printf '%s' "$CODEARTIFACT_DOMAIN_OWNER" | grep -Eq '^[0-9]{12}$' \
+              || fail "codeartifact_domain_owner must be a 12-digit AWS account ID (got '$CODEARTIFACT_DOMAIN_OWNER')"
+            printf '%s' "$CODEARTIFACT_REGION" | grep -Eq '^[a-z]{2}-[a-z]+-[0-9]+$' \
+              || fail "codeartifact_region must be an AWS region (got '$CODEARTIFACT_REGION')"
           fi
           {
             echo "environment=$ENVIRONMENT"
@@ -279,7 +301,6 @@ jobs:
             echo "ecr_repository=$ECR_REPOSITORY"
             echo "deployment_name=$DEPLOYMENT_NAME"
             echo "container_name=$CONTAINER_NAME"
-            echo "manifest_path=$MANIFEST_PATH"
             echo "namespace=$NAMESPACE"
             echo "aws_secret_arn=$AWS_SECRET_ARN"
             echo "k8s_secret_name=$K8S_SECRET_NAME"
@@ -292,6 +313,9 @@ jobs:
             echo "service=$SERVICE"
             echo "chart=$CHART"
             echo "charts_ref=$CHARTS_REF"
+            echo "codeartifact_domain=$CODEARTIFACT_DOMAIN"
+            echo "codeartifact_domain_owner=$CODEARTIFACT_DOMAIN_OWNER"
+            echo "codeartifact_region=$CODEARTIFACT_REGION"
           } >> "$GITHUB_OUTPUT"
 
           echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
@@ -309,6 +333,9 @@ jobs:
       ecr_repository: ${{ needs.validate-inputs.outputs.ecr_repository }}
       dockerfile: ${{ needs.validate-inputs.outputs.dockerfile }}
       build_env: ${{ needs.validate-inputs.outputs.build_env }}
+      codeartifact_domain: ${{ needs.validate-inputs.outputs.codeartifact_domain }}
+      codeartifact_domain_owner: ${{ needs.validate-inputs.outputs.codeartifact_domain_owner }}
+      codeartifact_region: ${{ needs.validate-inputs.outputs.codeartifact_region }}
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
@@ -326,7 +353,6 @@ jobs:
       environment: ${{ needs.validate-inputs.outputs.environment }}
       image: ${{ needs.build-and-push.outputs.image }}
       k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
-      manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
       deploy_method: ${{ needs.validate-inputs.outputs.deploy_method }}
       product: ${{ needs.validate-inputs.outputs.product }}
@@ -352,7 +378,6 @@ jobs:
       environment: ${{ needs.validate-inputs.outputs.environment }}
       k8s_api_host: ${{ needs.validate-inputs.outputs.k8s_api_host }}
       k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
-      manifest_path: ${{ needs.validate-inputs.outputs.manifest_path }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
       image: ${{ needs.build-and-push.outputs.image }}
       deploy_method: ${{ needs.validate-inputs.outputs.deploy_method }}

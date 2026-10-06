@@ -42,12 +42,6 @@ on:
         default: ""
         type: string
 
-      manifest_path:
-        description: "Path (in the consumer repo) to a kustomize dir or plain manifests. Auto-detected if empty."
-        required: false
-        default: ""
-        type: string
-
       k8s_api_host:
         description: Private IP of the kube-apiserver for SSM port forwarding
         required: true
@@ -66,15 +60,15 @@ on:
         type: string
 
       image:
-        description: "Fully-qualified ECR image (repo@sha256:...) from build-ecr.yml. Used when deploy_method is helm."
+        description: "Fully-qualified ECR image (repo@sha256:...) from build-ecr.yml."
         required: false
         default: ""
         type: string
 
       deploy_method:
-        description: "helm or manifests"
+        description: "Helm only."
         required: false
-        default: "manifests"
+        default: "helm"
         type: string
 
       product:
@@ -133,7 +127,6 @@ jobs:
       K8S_INSTANCE_ID: ${{ secrets.K8S_INSTANCE_ID }}
       K8S_SECRET_NAME: ${{ inputs.k8s_secret_name }}
       K8S_TUNNEL_LOCAL_PORT: 8443
-      MANIFEST_PATH_INPUT: ${{ inputs.manifest_path }}
       NAMESPACE: ${{ inputs.namespace != '' && inputs.namespace || inputs.environment }}
       ENVIRONMENT: ${{ inputs.environment }}
       IMAGE: ${{ inputs.image }}
@@ -327,7 +320,6 @@ jobs:
           echo "✓ Kubernetes Secret/${K8S_NAME} synced (${KEY_COUNT} key(s); values not logged)"
 
       - name: Checkout Helm charts and values
-        if: ${{ inputs.deploy_method == 'helm' }}
         uses: actions/checkout@v4
         with:
           repository: Ennovative-Genix/sgx-github-actions
@@ -335,13 +327,11 @@ jobs:
           path: helm-src
 
       - name: Set up Helm
-        if: ${{ inputs.deploy_method == 'helm' }}
         uses: azure/setup-helm@v4
         with:
           version: v3.16.4
 
       - name: Adopt existing resources for Helm
-        if: ${{ inputs.deploy_method == 'helm' }}
         env:
           RELEASE: ${{ env.DEPLOYMENT_NAME }}
         run: |
@@ -364,7 +354,6 @@ jobs:
           adopt pdb "$RELEASE"
 
       - name: Helm upgrade
-        if: ${{ inputs.deploy_method == 'helm' }}
         env:
           RELEASE: ${{ env.DEPLOYMENT_NAME }}
         run: |
@@ -399,7 +388,6 @@ jobs:
           helm "${HELM_ARGS[@]}"
 
       - name: Wait for rollout
-        if: ${{ inputs.deploy_method == 'helm' }}
         run: |
           set -euo pipefail
           if kubectl rollout status "deployment/${DEPLOYMENT_NAME}" -n "$NAMESPACE" --timeout=600s; then
@@ -411,74 +399,11 @@ jobs:
           echo "--- pods ---"; kubectl get pods -n "$NAMESPACE" -l "app=${DEPLOYMENT_NAME}" -o wide || true
           exit 1
 
-      - name: Resolve manifest path
-        if: ${{ inputs.deploy_method != 'helm' }}
-        id: manifests
-        run: |
-          set -euo pipefail
-          MP="$MANIFEST_PATH_INPUT"
-          if [ -z "$MP" ]; then
-            if [ -f "k8s/overlays/${ENVIRONMENT}/kustomization.yaml" ] || [ -f "k8s/overlays/${ENVIRONMENT}/kustomization.yml" ]; then
-              MP="k8s/overlays/${ENVIRONMENT}"
-            else
-              MP="k8s"
-            fi
-          fi
-          [ -e "$MP" ] || { echo "::error::manifest path '$MP' not found in the consumer repo"; exit 1; }
-          if [ -f "$MP/kustomization.yaml" ] || [ -f "$MP/kustomization.yml" ]; then
-            echo "mode=kustomize" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=plain" >> "$GITHUB_OUTPUT"
-          fi
-          echo "path=$MP" >> "$GITHUB_OUTPUT"
-          echo "Using manifests at '$MP'"
-        env:
-          ENVIRONMENT: ${{ inputs.environment }}
-
-      - name: Apply Kubernetes Manifests
-        if: ${{ inputs.deploy_method != 'helm' }}
-        env:
-          MP: ${{ steps.manifests.outputs.path }}
-          MODE: ${{ steps.manifests.outputs.mode }}
-        run: |
-          set -euo pipefail
-          if [ "$MODE" = "kustomize" ]; then
-            kubectl apply -k "$MP" -n "${NAMESPACE}"
-          else
-            kubectl apply -f "$MP" -n "${NAMESPACE}"
-          fi
-
       - name: Check Resources
         run: |
           kubectl get deployments -n ${NAMESPACE}
           kubectl get svc -n ${NAMESPACE}
           kubectl get pods -n ${NAMESPACE}
-
-      - name: Update Deployment Image
-        if: ${{ inputs.deploy_method != 'helm' }}
-        env:
-          IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          echo "Updating deployment ${DEPLOYMENT_NAME}"
-          echo "Container: ${CONTAINER_NAME}"
-          echo "Image: ${IMAGE}"
-
-          kubectl set image deployment/${DEPLOYMENT_NAME} \
-            ${CONTAINER_NAME}=${IMAGE} \
-            -n ${NAMESPACE}
-
-          kubectl get deployment ${DEPLOYMENT_NAME} \
-            -n ${NAMESPACE} \
-            -o wide
-
-      - name: Wait For Rollout
-        if: ${{ inputs.deploy_method != 'helm' }}
-        run: |
-          kubectl rollout status deployment/${DEPLOYMENT_NAME} \
-            -n ${NAMESPACE} \
-            --timeout=300s
 
       - name: Pod Status
         run: |
