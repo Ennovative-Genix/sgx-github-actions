@@ -2,11 +2,8 @@ fullnameOverride: docexnestjs
 replicaCount: 1
 revisionHistoryLimit: 2
 containerPort: 3001
-imagePullSecrets:
-  - name: ecr-secret
 envFrom:
   secret: docexnestjs-secret
-  configMap: docexnestjs-config
 service:
   type: ClusterIP
   port: 3001

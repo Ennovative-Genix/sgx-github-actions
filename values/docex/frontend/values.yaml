@@ -2,8 +2,6 @@ fullnameOverride: docexclient
 replicaCount: 1
 revisionHistoryLimit: 2
 containerPort: 80
-imagePullSecrets:
-  - name: ecr-secret
 service:
   type: ClusterIP
   port: 80
