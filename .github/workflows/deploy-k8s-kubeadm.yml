@@ -387,6 +387,15 @@ jobs:
           echo "helm ${HELM_ARGS[*]}"
           helm "${HELM_ARGS[@]}"
 
+      # A re-run deploys the same image digest, so Helm leaves the pod template unchanged
+      # and pods would keep the previously synced Secret values.
+      - name: Restart pods on re-run
+        if: ${{ github.run_attempt > 1 }}
+        run: |
+          set -euo pipefail
+          kubectl rollout restart "deployment/${DEPLOYMENT_NAME}" -n "$NAMESPACE"
+          echo "✓ Triggered rollout restart for deployment/${DEPLOYMENT_NAME} (run attempt ${{ github.run_attempt }})"
+
       - name: Wait for rollout
         run: |
           set -euo pipefail
