@@ -1,0 +1,52 @@
+fullnameOverride: nova-mcp-tools
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 8200
+envFrom:
+  secret: nova-mcp-secrets
+service:
+  type: ClusterIP
+  port: 8200
+ingress:
+  path: /api/nova/mcp
+  pathType: Prefix
+  alb:
+    groupOrder: "8"
+    rewrite:
+      enabled: true
+      regex: "^/api/nova/mcp/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 30m
+    memory: 512Mi
+  limits:
+    cpu: 100m
+    memory: 512Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: nova-mcp-tools
+          topologyKey: kubernetes.io/hostname
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8200
+  initialDelaySeconds: 45
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8200
+  initialDelaySeconds: 45
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+autoscaling:
+  enabled: false
