@@ -1,0 +1,67 @@
+fullnameOverride: snow-service
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 9000
+envFrom:
+  secret: nova-snow-secrets
+env:
+  - name: APP_ENV
+    value: "qa"
+  - name: APP_PORT
+    value: "9000"
+  - name: APP_NAME
+    value: "snow-service"
+  - name: API_ALIAS_PATH
+    value: "/api/snow/service"
+service:
+  type: ClusterIP
+  port: 9000
+ingress:
+  path: /api/snow/service
+  pathType: Prefix
+  alb:
+    groupOrder: "6"
+    rewrite:
+      enabled: true
+      regex: "^/api/snow/service/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    cpu: 250m
+    memory: 512Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: snow-service
+          topologyKey: kubernetes.io/hostname
+startupProbe:
+  httpGet:
+    path: /health
+    port: 9000
+  periodSeconds: 10
+  failureThreshold: 30
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 9000
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 10
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9000
+  initialDelaySeconds: 90
+  periodSeconds: 20
+  timeoutSeconds: 10
+  failureThreshold: 3
+autoscaling:
+  enabled: false

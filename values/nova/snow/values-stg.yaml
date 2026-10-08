@@ -1,0 +1,17 @@
+replicaCount: 2
+env:
+  - name: APP_ENV
+    value: "staging"
+  - name: APP_PORT
+    value: "9000"
+  - name: APP_NAME
+    value: "snow-service"
+  - name: API_ALIAS_PATH
+    value: "/api/snow/service"
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
