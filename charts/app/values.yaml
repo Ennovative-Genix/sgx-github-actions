@@ -64,6 +64,8 @@ livenessProbe:
 
 startupProbe: {}
 
+securityContext: {}
+
 resources:
   requests:
     cpu: 25m

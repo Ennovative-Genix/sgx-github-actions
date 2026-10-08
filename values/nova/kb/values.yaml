@@ -1,0 +1,47 @@
+fullnameOverride: kb-service
+replicaCount: 1
+containerPort: 3001
+envFrom:
+  secret: nova-kb-secrets
+env:
+  - name: API_ALIAS_PATH
+    value: /api/kb/service
+service:
+  type: ClusterIP
+  port: 80
+ingress:
+  path: /api/kb/service
+  pathType: Prefix
+  alb:
+    groupOrder: "0"
+    rewrite:
+      enabled: true
+      regex: "^/api/kb/service/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 30m
+    memory: 250Mi
+  limits:
+    cpu: 100m
+    memory: 1500Mi
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  initialDelaySeconds: 90
+  periodSeconds: 15
+  timeoutSeconds: 10
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  initialDelaySeconds: 90
+  periodSeconds: 20
+  timeoutSeconds: 10
+  failureThreshold: 3
+securityContext:
+  allowPrivilegeEscalation: false
+autoscaling:
+  enabled: false

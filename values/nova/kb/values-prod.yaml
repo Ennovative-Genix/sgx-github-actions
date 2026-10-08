@@ -1,0 +1,13 @@
+replicaCount: 1
+service:
+  port: 3001
+ingress:
+  alb:
+    groupOrder: "5"
+resources:
+  requests:
+    cpu: 450m
+    memory: 250Mi
+  limits:
+    cpu: 900m
+    memory: 1500Mi
