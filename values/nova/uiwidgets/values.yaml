@@ -1,0 +1,71 @@
+fullnameOverride: novauiwidgets-storybook
+replicaCount: 1
+revisionHistoryLimit: 1
+imagePullSecrets:
+  - name: ecr-secret
+containerPort: 6006
+env:
+  - name: PORT
+    value: "6006"
+service:
+  type: ClusterIP
+  port: 6006
+ingress:
+  path: /nova-ui-widgets
+  pathType: Prefix
+  alb:
+    groupOrder: "100"
+    rewrite:
+      enabled: true
+      regex: "^/nova-ui-widgets/(.*)$"
+      replace: "/$1"
+  annotations:
+    alb.ingress.kubernetes.io/actions.redirect-to-slash: >
+      {
+        "type":"redirect",
+        "redirectConfig":{
+          "path":"/nova-ui-widgets/",
+          "statusCode":"HTTP_302"
+        }
+      }
+  # Storybook's relative asset URLs only resolve on the trailing-slash URL,
+  # and the rewrite regex never matches the bare path.
+  prePaths:
+    - path: /nova-ui-widgets
+      pathType: Exact
+      serviceName: redirect-to-slash
+      servicePortName: use-annotation
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: novauiwidgets-storybook
+          topologyKey: kubernetes.io/hostname
+readinessProbe:
+  httpGet:
+    path: /
+    port: 6006
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+livenessProbe:
+  httpGet:
+    path: /
+    port: 6006
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+autoscaling:
+  enabled: false

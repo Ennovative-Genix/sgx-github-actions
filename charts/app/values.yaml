@@ -33,6 +33,11 @@ ingress:
   className: alb
   path: /
   pathType: Prefix
+  # Extra ingress annotations, e.g. ALB actions referenced by prePaths.
+  annotations: {}
+  # Paths rendered before the main path (ALB evaluates rules in order).
+  # Use servicePortName: use-annotation to target an ALB action annotation.
+  prePaths: []
   extraPaths: []
   alb:
     groupName: ""

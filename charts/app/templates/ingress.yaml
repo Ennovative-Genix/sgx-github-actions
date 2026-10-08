@@ -37,11 +37,27 @@ metadata:
         }
       ]
     {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
     - http:
         paths:
+          {{- range .Values.ingress.prePaths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ .serviceName }}
+                port:
+                  {{- if .servicePortName }}
+                  name: {{ .servicePortName }}
+                  {{- else }}
+                  number: {{ .servicePort }}
+                  {{- end }}
+          {{- end }}
           - path: {{ .Values.ingress.path }}
             pathType: {{ .Values.ingress.pathType }}
             backend:
