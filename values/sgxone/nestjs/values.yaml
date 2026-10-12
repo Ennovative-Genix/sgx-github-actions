@@ -2,6 +2,8 @@ fullnameOverride: sgxonenestjs
 replicaCount: 1
 revisionHistoryLimit: 2
 containerPort: 3000
+envFrom:
+  secret: sgxonenestjs-secret
 service:
   type: ClusterIP
   port: 3000
@@ -13,7 +15,7 @@ ingress:
     rewrite:
       enabled: true
       regex: "^/api/sgxone/service/(.*)$"
-      replace: "/$1"
+      replace: "/api/$1"
 resources:
   requests:
     cpu: 50m
@@ -32,7 +34,7 @@ affinity:
           topologyKey: kubernetes.io/hostname
 readinessProbe:
   httpGet:
-    path: /
+    path: /api
     port: 3000
   initialDelaySeconds: 20
   periodSeconds: 5
@@ -40,7 +42,7 @@ readinessProbe:
   failureThreshold: 3
 livenessProbe:
   httpGet:
-    path: /
+    path: /api
     port: 3000
   initialDelaySeconds: 30
   periodSeconds: 10
