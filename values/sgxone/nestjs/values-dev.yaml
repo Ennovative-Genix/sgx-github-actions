@@ -1,0 +1,4 @@
+replicaCount: 1
+env:
+  - name: APP_ENV
+    value: dev

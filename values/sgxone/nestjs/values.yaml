@@ -1,0 +1,50 @@
+fullnameOverride: sgxonenestjs
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 3000
+service:
+  type: ClusterIP
+  port: 3000
+ingress:
+  path: /api/sgxone/service
+  pathType: Prefix
+  alb:
+    groupOrder: "14"
+    rewrite:
+      enabled: true
+      regex: "^/api/sgxone/service/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: sgxonenestjs
+          topologyKey: kubernetes.io/hostname
+readinessProbe:
+  httpGet:
+    path: /
+    port: 3000
+  initialDelaySeconds: 20
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+autoscaling:
+  enabled: false

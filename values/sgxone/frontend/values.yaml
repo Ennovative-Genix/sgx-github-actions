@@ -1,0 +1,50 @@
+fullnameOverride: sgxoneclient
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 80
+service:
+  type: ClusterIP
+  port: 80
+ingress:
+  path: /sgxone
+  pathType: Prefix
+  alb:
+    groupOrder: "32"
+    rewrite:
+      enabled: true
+      regex: "^/sgxone/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: sgxoneclient
+          topologyKey: kubernetes.io/hostname
+readinessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+autoscaling:
+  enabled: false
