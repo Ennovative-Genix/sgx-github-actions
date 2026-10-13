@@ -1,1 +1,10 @@
 replicaCount: 1
+imagePullSecrets:
+  - name: ecr-secret
+resources:
+  requests:
+    cpu: 256m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

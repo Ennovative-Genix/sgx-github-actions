@@ -1,1 +1,15 @@
 replicaCount: 1
+service:
+  port: 8000
+ingress:
+  alb:
+    groupOrder: "7"
+resources:
+  requests:
+    cpu: 30m
+    memory: 250Mi
+  limits:
+    cpu: 100m
+    memory: 1500Mi
+securityContext:
+  allowPrivilegeEscalation: false
