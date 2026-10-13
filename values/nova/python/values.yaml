@@ -29,10 +29,10 @@ ingress:
       replace: /$1
 resources:
   requests:
-    cpu: 450m
+    cpu: 50m
     memory: 250Mi
   limits:
-    cpu: 900m
+    cpu: 500m
     memory: 1500Mi
 readinessProbe:
   httpGet:
