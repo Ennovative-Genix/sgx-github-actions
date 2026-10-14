@@ -1,0 +1,66 @@
+fullnameOverride: vistabatch
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 8000
+envFrom:
+  secret: vistabatch-secret
+service:
+  type: ClusterIP
+  port: 8000
+ingress:
+  path: /api/vista/batch
+  pathType: Prefix
+  alb:
+    groupOrder: "19"
+    rewrite:
+      enabled: true
+      regex: "^/api/vista/batch/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: 800m
+    memory: 1536Mi
+startupProbe:
+  httpGet:
+    path: /api/v1/health/
+    port: 8000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 15
+  failureThreshold: 60
+readinessProbe:
+  httpGet:
+    path: /api/v1/health/
+    port: 8000
+  periodSeconds: 15
+  timeoutSeconds: 15
+  failureThreshold: 5
+livenessProbe:
+  httpGet:
+    path: /api/v1/health/
+    port: 8000
+  initialDelaySeconds: 30
+  periodSeconds: 20
+  timeoutSeconds: 15
+  failureThreshold: 5
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

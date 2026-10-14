@@ -1,0 +1,59 @@
+fullnameOverride: vistanlp
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 9090
+envFrom:
+  secret: vistanlp-secret
+service:
+  type: ClusterIP
+  port: 9090
+ingress:
+  path: /api/vista/nlp
+  pathType: Prefix
+  alb:
+    groupOrder: "18"
+    rewrite:
+      enabled: true
+      regex: "^/api/vista/nlp/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 100m
+    memory: 250Mi
+  limits:
+    cpu: 2000m
+    memory: 1536Mi
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 9090
+  initialDelaySeconds: 30
+  periodSeconds: 15
+  timeoutSeconds: 10
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9090
+  initialDelaySeconds: 60
+  periodSeconds: 20
+  timeoutSeconds: 10
+  failureThreshold: 3
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

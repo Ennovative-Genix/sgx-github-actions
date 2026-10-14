@@ -1,0 +1,5 @@
+replicaCount: 1
+
+env:
+  - name: AWS_REGION
+    value: ap-south-1
