@@ -1,0 +1,6 @@
+replicaCount: 1
+env:
+  - name: PORT
+    value: "3000"
+  - name: AWS_REGION
+    value: us-east-1

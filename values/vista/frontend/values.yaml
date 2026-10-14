@@ -1,0 +1,41 @@
+fullnameOverride: vistaclient
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 80
+service:
+  type: ClusterIP
+  port: 80
+ingress:
+  path: /vista
+  pathType: Prefix
+  alb:
+    groupOrder: "38"
+    rewrite:
+      enabled: true
+      regex: "^/vista/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi
+readinessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+livenessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+autoscaling:
+  enabled: false
