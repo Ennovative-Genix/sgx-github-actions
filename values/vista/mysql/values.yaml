@@ -1,0 +1,14 @@
+# Vista MySQL (chart: charts/mysql). Deployed once per environment by vista-monorepo mysql.yml.
+# Same names as the previous k8s/mysql manifest: pod label vistamysql, Service mysql.
+fullnameOverride: vistamysql
+
+secretName: vistamysql-secret
+
+service:
+  # Vista apps use DB_HOST=mysql.
+  name: mysql
+
+persistence:
+  # gp3 must exist as a StorageClass in the cluster (kubectl get sc).
+  storageClass: gp3
+  size: 20Gi

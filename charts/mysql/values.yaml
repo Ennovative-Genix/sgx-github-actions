@@ -1,0 +1,82 @@
+# Generic single-instance MySQL. Product defaults live in values/<product>/mysql/.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: mysql
+  tag: "8.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Kubernetes Secret (synced from AWS Secrets Manager by the deploy workflow).
+# Every key listed in secretKeys must exist in it.
+secretName: ""
+secretKeys:
+  - MYSQL_ROOT_PASSWORD
+  - MYSQL_DATABASE
+  - MYSQL_USER
+  - MYSQL_PASSWORD
+
+args:
+  - --character-set-server=utf8mb4
+  - --collation-server=utf8mb4_unicode_ci
+
+service:
+  # Defaults to the release fullname. Vista apps connect with DB_HOST=mysql.
+  name: ""
+  type: ClusterIP
+  port: 3306
+
+persistence:
+  enabled: true
+  # Set to reuse a volume that already exists (it is then not created or managed by Helm).
+  existingClaim: ""
+  storageClass: ""
+  size: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  # Sub-directory of the volume used as the data dir. A fresh ext4/EBS volume contains
+  # lost+found, which makes `mysqld --initialize` refuse to start, so new volumes use a
+  # sub-directory. Set to "" only when reusing a volume whose data sits at the root.
+  subPath: mysql
+
+terminationGracePeriodSeconds: 60
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# First start on an empty volume initialises the database; allow up to 5 minutes.
+startupProbe:
+  exec:
+    command:
+      - bash
+      - -ec
+      - mysqladmin ping -h 127.0.0.1 -uroot -p"${MYSQL_ROOT_PASSWORD}"
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+
+readinessProbe:
+  exec:
+    command:
+      - bash
+      - -ec
+      - mysqladmin ping -h 127.0.0.1 -uroot -p"${MYSQL_ROOT_PASSWORD}"
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+livenessProbe:
+  exec:
+    command:
+      - bash
+      - -ec
+      - mysqladmin ping -h 127.0.0.1 -uroot -p"${MYSQL_ROOT_PASSWORD}"
+  periodSeconds: 20
+  timeoutSeconds: 5

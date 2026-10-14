@@ -1,0 +1,4 @@
+# Dev already has data on this volume (created by the old k8s/mysql manifest, data at the volume root).
+persistence:
+  existingClaim: vistamysql-data
+  subPath: ""
