@@ -4,6 +4,13 @@ fullnameOverride: vistamysql
 
 secretName: vistamysql-secret
 
+# Overlay replaces the chart args list; keep charset/collation.
+# mysql:8.0 with bind_address=* listens on IPv6 :: only; NestJS uses IPv4 ClusterIP.
+args:
+  - --character-set-server=utf8mb4
+  - --collation-server=utf8mb4_unicode_ci
+  - --bind-address=0.0.0.0
+
 service:
   # Vista apps use DB_HOST=mysql.
   name: mysql
