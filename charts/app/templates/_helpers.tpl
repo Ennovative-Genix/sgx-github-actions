@@ -40,6 +40,22 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
+Combined container env. `env` is a list (Helm replaces lists, so overlays
+must repeat it). `extraEnv` is a map, so overlays merge and can set only
+APP_ENV (or similar) without repeating APP_PORT / APP_NAME / etc.
+*/}}
+{{- define "app.env" -}}
+{{- $items := default list .Values.env }}
+{{- range $k, $v := .Values.extraEnv }}
+{{- $items = append $items (dict "name" $k "value" ($v | toString)) }}
+{{- end }}
+{{- if $items }}
+env:
+{{ toYaml $items | indent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
 Image: prefer digest (CI), else tag, else latest.
 */}}
 {{- define "app.image" -}}

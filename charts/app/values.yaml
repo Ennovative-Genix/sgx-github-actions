@@ -12,7 +12,10 @@ image:
 imagePullSecrets: []
 
 containerPort: 80
+# List. Helm replaces lists in overlays, so an overlay `env:` must repeat every entry.
 env: []
+# Map. Helm merges maps, so overlays can add APP_ENV without repeating env.
+extraEnv: {}
 
 envFrom:
   secret: ""

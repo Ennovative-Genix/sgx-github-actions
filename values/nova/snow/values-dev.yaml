@@ -1,10 +1,3 @@
 replicaCount: 1
-env:
-  - name: APP_ENV
-    value: "dev"
-  - name: APP_PORT
-    value: "9000"
-  - name: APP_NAME
-    value: "snow-service"
-  - name: API_ALIAS_PATH
-    value: "/api/snow/service"
+extraEnv:
+  APP_ENV: "dev"
