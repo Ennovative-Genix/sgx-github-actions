@@ -1,8 +1,6 @@
 fullnameOverride: novauiwidgets-storybook
 replicaCount: 1
 revisionHistoryLimit: 1
-imagePullSecrets:
-  - name: ecr-secret
 containerPort: 6006
 env:
   - name: PORT
