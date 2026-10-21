@@ -1,0 +1,75 @@
+fullnameOverride: sentriomnestjs
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 3001
+envFrom:
+  secret: sentriomnestjs-secret
+env:
+  - name: PORT
+    value: "3001"
+  - name: EXPIRES_IN
+    value: "1h"
+  - name: CF_BUCKET_NAME
+    value: "ai-foundry-files"
+service:
+  type: ClusterIP
+  port: 3001
+ingress:
+  path: /api/sentriom/service
+  pathType: Prefix
+  alb:
+    groupOrder: "14"
+    rewrite:
+      enabled: true
+      regex: "^/api/sentriom/service/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: sentriomnestjs
+          topologyKey: kubernetes.io/hostname
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  initialDelaySeconds: 40
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3001
+  initialDelaySeconds: 40
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
