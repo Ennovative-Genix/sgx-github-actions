@@ -1,0 +1,3 @@
+replicaCount: 1
+extraEnv:
+  APP_ENV: "qa"

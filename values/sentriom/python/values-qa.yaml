@@ -1,0 +1,4 @@
+replicaCount: 1
+extraEnv:
+  APP_ENV: "qa"
+  AWS_REGION: ap-south-1
