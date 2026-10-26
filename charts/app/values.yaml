@@ -93,4 +93,19 @@ pdb:
   enabled: false
   maxUnavailable: 1
 
+# Each entry renders a CronJob named <fullname>-<name>. Image defaults to the app image.
+# - name: cleanup
+#   schedule: "0 2 * * *"
+#   timeZone: Etc/UTC            # optional
+#   image: ""                    # optional
+#   command: ["python", "-m", "app.cleanup"]
+#   args: []
+#   appEnv: true                 # optional: mount envFrom.secret
+#   env: []
+#   resources: {}
+#   concurrencyPolicy: Forbid
+#   backoffLimit: 2
+#   activeDeadlineSeconds: 600
+cronJobs: []
+
 affinity: {}
