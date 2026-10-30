@@ -19,6 +19,6 @@ cronJobs:
       - --header
       - "Content-Type: application/json"
       - --data
-      - '{"bucket": "genix-vista-bp", "prefix": "recordings"}'
+      - '{"bucket": "genix-vista-bp-qa", "prefix": "recordings"}'
       - http://vistabatch.vista-dev.svc.cluster.local:8000/api/v1/batch/run
     backoffLimit: 2
