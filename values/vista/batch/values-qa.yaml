@@ -3,3 +3,22 @@ replicaCount: 1
 env:
   - name: AWS_REGION
     value: ap-south-1
+
+cronJobs:
+  - name: trigger
+    schedule: "30 12 * * *"
+    timeZone: Etc/UTC
+    image: curlimages/curl:8.10.1
+    command: ["curl"]
+    args:
+      - --silent
+      - --show-error
+      - --fail-with-body
+      - --request
+      - POST
+      - --header
+      - "Content-Type: application/json"
+      - --data
+      - '{"bucket": "genix-vista-bp", "prefix": "recordings"}'
+      - http://vistabatch.vista-qa.svc.cluster.local:8000/api/v1/batch/run
+    backoffLimit: 2
