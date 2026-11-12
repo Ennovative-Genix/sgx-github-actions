@@ -73,7 +73,17 @@ on:
         type: string
         default: ""
       build_env:
-        description: "Docker ARG ENV. Empty = environment (dev/qa/stg/prod)."
+        description: "Docker ARG ENV. Empty = environment (dev/qa/stg/prod). Prefer a fixed value (e.g. prod) for env-agnostic images."
+        required: false
+        type: string
+        default: ""
+      skip_build:
+        description: "When true, do not build/push; deploy the provided image (promote path)."
+        required: false
+        type: boolean
+        default: false
+      image:
+        description: "Fully-qualified image to deploy when skip_build=true (registry/repo@sha256:...). Cross-region copies are handled automatically."
         required: false
         type: string
         default: ""
@@ -165,6 +175,8 @@ jobs:
       k8s_type: ${{ steps.normalize.outputs.k8s_type }}
       dockerfile: ${{ steps.normalize.outputs.dockerfile }}
       build_env: ${{ steps.normalize.outputs.build_env }}
+      skip_build: ${{ steps.normalize.outputs.skip_build }}
+      image: ${{ steps.normalize.outputs.image }}
       deploy_method: ${{ steps.normalize.outputs.deploy_method }}
       product: ${{ steps.normalize.outputs.product }}
       service: ${{ steps.normalize.outputs.service }}
@@ -192,6 +204,8 @@ jobs:
           K8S_TYPE: ${{ inputs.k8s_type }}
           DOCKERFILE: ${{ inputs.dockerfile }}
           BUILD_ENV: ${{ inputs.build_env }}
+          SKIP_BUILD: ${{ inputs.skip_build }}
+          IMAGE: ${{ inputs.image }}
           DEPLOY_METHOD: ${{ inputs.deploy_method }}
           PRODUCT: ${{ inputs.product }}
           SERVICE: ${{ inputs.service }}
@@ -223,6 +237,8 @@ jobs:
           K8S_TYPE="$(trim "$K8S_TYPE")"
           DOCKERFILE="$(trim "$DOCKERFILE")"
           BUILD_ENV="$(trim "$BUILD_ENV")"
+          SKIP_BUILD="$(trim "$SKIP_BUILD")"
+          IMAGE="$(trim "$IMAGE")"
           DEPLOY_METHOD="$(trim "$DEPLOY_METHOD")"
           PRODUCT="$(trim "$PRODUCT")"
           SERVICE="$(trim "$SERVICE")"
@@ -236,6 +252,17 @@ jobs:
             dev|qa|uat|stg|staging|preprod|prod) ;;
             *) fail "environment must be one of dev|qa|uat|stg|staging|preprod|prod (got '$ENVIRONMENT')" ;;
           esac
+
+          case "$SKIP_BUILD" in
+            true|True|TRUE|yes|1) SKIP_BUILD=true ;;
+            false|False|FALSE|no|0|"") SKIP_BUILD=false ;;
+            *) fail "skip_build must be boolean (got '$SKIP_BUILD')" ;;
+          esac
+          if [ "$SKIP_BUILD" = true ]; then
+            [ -n "$IMAGE" ] || fail "image is required when skip_build=true (digest-pinned registry/repo@sha256:...)"
+            printf '%s' "$IMAGE" | grep -Eq '^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$' \
+              || fail "image must be digest-pinned (registry/repo@sha256:...) (got '$IMAGE')"
+          fi
 
           printf '%s' "$DOCKER_IMAGE_NAME" | grep -Eq '^[a-z0-9][a-z0-9._/-]*$' \
             || fail "docker_image_name must match ^[a-z0-9][a-z0-9._/-]*$ (got '$DOCKER_IMAGE_NAME')"
@@ -308,6 +335,8 @@ jobs:
             echo "k8s_type=$K8S_TYPE"
             echo "dockerfile=$DOCKERFILE"
             echo "build_env=$BUILD_ENV"
+            echo "skip_build=$SKIP_BUILD"
+            echo "image=$IMAGE"
             echo "deploy_method=$DEPLOY_METHOD"
             echo "product=$PRODUCT"
             echo "service=$SERVICE"
@@ -318,11 +347,12 @@ jobs:
             echo "codeartifact_region=$CODEARTIFACT_REGION"
           } >> "$GITHUB_OUTPUT"
 
-          echo "Inputs validated: environment=$ENVIRONMENT image=$DOCKER_IMAGE_NAME"
+          echo "Inputs validated: environment=$ENVIRONMENT skip_build=$SKIP_BUILD image_name=$DOCKER_IMAGE_NAME"
 
   build-and-push:
     name: Build and Push to ECR
     needs: validate-inputs
+    if: ${{ needs.validate-inputs.outputs.skip_build != 'true' }}
     uses: ./.github/workflows/build-ecr.yml
     with:
       environment: ${{ needs.validate-inputs.outputs.environment }}
@@ -339,10 +369,94 @@ jobs:
     secrets:
       IAM_ROLE_ARN: ${{ secrets.IAM_ROLE_ARN }}
 
+  # Resolve the digest to deploy. On promote (skip_build), copy into the target
+  # region's ECR when the source image lives in another region (QA ap-south-1 →
+  # STG/PROD us-east-1).
+  resolve-image:
+    name: Resolve image for deploy
+    needs: [validate-inputs, build-and-push]
+    if: ${{ always() && needs.validate-inputs.result == 'success' && (needs.validate-inputs.outputs.skip_build == 'true' || needs.build-and-push.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - name: Configure AWS Credentials (OIDC)
+        if: ${{ needs.validate-inputs.outputs.skip_build == 'true' }}
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.IAM_ROLE_ARN }}
+          aws-region: ${{ needs.validate-inputs.outputs.env_region }}
+          role-session-name: GitHubActions-Promote-ECR-${{ github.run_id }}
+
+      - name: Login to Amazon ECR (target region)
+        if: ${{ needs.validate-inputs.outputs.skip_build == 'true' }}
+        id: login-ecr-target
+        uses: aws-actions/amazon-ecr-login@b040164c4934333d597f3f9c67502ff28f814e9c # v2.1.6
+
+      - name: Resolve image reference
+        id: resolve
+        env:
+          SKIP_BUILD: ${{ needs.validate-inputs.outputs.skip_build }}
+          SOURCE_IMAGE: ${{ needs.validate-inputs.outputs.image }}
+          BUILT_IMAGE: ${{ needs.build-and-push.outputs.image }}
+          TARGET_REGION: ${{ needs.validate-inputs.outputs.env_region }}
+          TARGET_REGISTRY: ${{ steps.login-ecr-target.outputs.registry }}
+          ECR_REPOSITORY: ${{ needs.validate-inputs.outputs.ecr_repository }}
+          DOCKER_IMAGE_NAME: ${{ needs.validate-inputs.outputs.docker_image_name }}
+          ENVIRONMENT: ${{ needs.validate-inputs.outputs.environment }}
+        run: |
+          set -euo pipefail
+          if [ "$SKIP_BUILD" != true ]; then
+            echo "image=${BUILT_IMAGE}" >> "$GITHUB_OUTPUT"
+            echo "Using freshly built image: ${BUILT_IMAGE}"
+            exit 0
+          fi
+
+          REPO_NAME="${ECR_REPOSITORY:-$DOCKER_IMAGE_NAME}"
+          SOURCE_REGISTRY="${SOURCE_IMAGE%%/*}"
+          SOURCE_REGION="$(printf '%s' "$SOURCE_REGISTRY" | sed -n 's/.*\.dkr\.ecr\.\([^.]*\)\.amazonaws\.com/\1/p')"
+          TARGET_REPO_URI="${TARGET_REGISTRY}/${REPO_NAME}"
+
+          if [ -z "$SOURCE_REGION" ]; then
+            echo "::error::Could not parse source ECR region from '${SOURCE_IMAGE}'"
+            exit 1
+          fi
+
+          if [ "$SOURCE_REGISTRY" = "$TARGET_REGISTRY" ]; then
+            echo "image=${SOURCE_IMAGE}" >> "$GITHUB_OUTPUT"
+            echo "Source already in target registry: ${SOURCE_IMAGE}"
+            exit 0
+          fi
+
+          echo "Copying ${SOURCE_IMAGE} → ${TARGET_REPO_URI} (region ${SOURCE_REGION} → ${TARGET_REGION})"
+
+          # Install crane (pinned release) for cross-region ECR copy.
+          CRANE_VERSION=v0.20.3
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xzf - -C /usr/local/bin crane
+          chmod +x /usr/local/bin/crane
+
+          # Auth to source region as well (same account OIDC role, different region).
+          aws ecr get-login-password --region "$SOURCE_REGION" \
+            | crane auth login "$SOURCE_REGISTRY" -u AWS --password-stdin
+          aws ecr get-login-password --region "$TARGET_REGION" \
+            | crane auth login "$TARGET_REGISTRY" -u AWS --password-stdin
+
+          crane copy "$SOURCE_IMAGE" "${TARGET_REPO_URI}:${ENVIRONMENT}"
+          crane copy "$SOURCE_IMAGE" "${TARGET_REPO_URI}:${GITHUB_SHA}"
+
+          # Prefer digest from target repo after copy (content-addressable; usually identical).
+          TARGET_DIGEST="$(crane digest "${TARGET_REPO_URI}:${GITHUB_SHA}")"
+          echo "image=${TARGET_REPO_URI}@${TARGET_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Promoted ${SOURCE_IMAGE} → ${TARGET_REPO_URI}@${TARGET_DIGEST}"
+
   deploy-k8s:
     name: Deploy to Kubernetes (EKS)
-    if: ${{ needs.validate-inputs.outputs.k8s_type == 'EKS' }}
-    needs: [validate-inputs, build-and-push]
+    if: ${{ always() && needs.validate-inputs.result == 'success' && needs.resolve-image.result == 'success' && needs.validate-inputs.outputs.k8s_type == 'EKS' }}
+    needs: [validate-inputs, resolve-image]
     uses: ./.github/workflows/deploy-k8s.yml
     with:
       aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
@@ -351,7 +465,7 @@ jobs:
       docker_image_name: ${{ needs.validate-inputs.outputs.docker_image_name }}
       env_region: ${{ needs.validate-inputs.outputs.env_region }}
       environment: ${{ needs.validate-inputs.outputs.environment }}
-      image: ${{ needs.build-and-push.outputs.image }}
+      image: ${{ needs.resolve-image.outputs.image }}
       k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
       deploy_method: ${{ needs.validate-inputs.outputs.deploy_method }}
@@ -365,8 +479,8 @@ jobs:
 
   deploy-k8s-kubeadm:
     name: Deploy to Kubernetes (Kubeadm)
-    needs: [validate-inputs, build-and-push]
-    if: ${{ needs.validate-inputs.outputs.k8s_type != 'EKS' }}
+    needs: [validate-inputs, resolve-image]
+    if: ${{ always() && needs.validate-inputs.result == 'success' && needs.resolve-image.result == 'success' && needs.validate-inputs.outputs.k8s_type != 'EKS' }}
     uses: ./.github/workflows/deploy-k8s-kubeadm.yml
     with:
       aws_secret_arn: ${{ needs.validate-inputs.outputs.aws_secret_arn }}
@@ -379,7 +493,7 @@ jobs:
       k8s_api_host: ${{ needs.validate-inputs.outputs.k8s_api_host }}
       k8s_secret_name: ${{ needs.validate-inputs.outputs.k8s_secret_name }}
       namespace: ${{ needs.validate-inputs.outputs.namespace }}
-      image: ${{ needs.build-and-push.outputs.image }}
+      image: ${{ needs.resolve-image.outputs.image }}
       deploy_method: ${{ needs.validate-inputs.outputs.deploy_method }}
       product: ${{ needs.validate-inputs.outputs.product }}
       service: ${{ needs.validate-inputs.outputs.service }}

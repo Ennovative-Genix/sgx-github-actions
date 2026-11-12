@@ -1,5 +1,8 @@
 fullnameOverride: nova-frontend
 replicaCount: 1
+# Runtime UI flags for nginx → assets/config.json (promotable image).
+extraEnv:
+  NOVA_SHOW_RESPONSE_TIME: "true"
 strategy:
   type: RollingUpdate
   rollingUpdate:

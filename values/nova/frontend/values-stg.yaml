@@ -1,0 +1,3 @@
+replicaCount: 1
+extraEnv:
+  NOVA_SHOW_RESPONSE_TIME: "false"
