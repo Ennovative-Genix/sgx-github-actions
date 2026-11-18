@@ -1,0 +1,65 @@
+fullnameOverride: isa-inventory
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 8081
+envFrom:
+  secret: isa-inventory-secrets
+env:
+  - name: ISA_INV_HOST
+    value: "0.0.0.0"
+  - name: ISA_INV_PORT
+    value: "8081"
+  - name: OTEL_SERVICE_NAME
+    value: "isa-inventory"
+service:
+  type: ClusterIP
+  port: 8081
+ingress:
+  path: /api/isa/inventory
+  pathType: Prefix
+  alb:
+    groupOrder: "40"
+    rewrite:
+      enabled: true
+      regex: "^/api/isa/inventory/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: isa-inventory
+          topologyKey: kubernetes.io/hostname
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  periodSeconds: 10
+  failureThreshold: 30
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 45
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+autoscaling:
+  enabled: false

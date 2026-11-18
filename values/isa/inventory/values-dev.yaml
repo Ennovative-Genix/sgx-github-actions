@@ -1,0 +1,4 @@
+replicaCount: 1
+extraEnv:
+  ISA_INV_ENV: "dev"
+  ISA_INV_CLOCK_MODE: "system"
