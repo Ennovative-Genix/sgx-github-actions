@@ -1,0 +1,37 @@
+# Reusable: conflict / stale back-merge notify (+ optional Teams).
+# Caller secret: TEAMS_WEBHOOK_BRANCHING (optional).
+#
+#   jobs:
+#     notify:
+#       uses: Ennovative-Genix/sgx-github-actions/.github/workflows/branching-backmerge-notify.yml@chore/branching-strategy
+#       secrets: inherit
+
+name: Branching — back-merge notify
+
+on:
+  workflow_call:
+    secrets:
+      TEAMS_WEBHOOK_BRANCHING:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  notify:
+    name: Conflict / stale back-merge notify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'backmerge')
+    steps:
+      - name: Back-merge notify
+        uses: Ennovative-Genix/sgx-github-actions/branching/backmerge-notify@chore/branching-strategy
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          event-name: ${{ github.event_name }}
+          pr-number: ${{ github.event.pull_request.number || '' }}
+          teams-webhook: ${{ secrets.TEAMS_WEBHOOK_BRANCHING }}

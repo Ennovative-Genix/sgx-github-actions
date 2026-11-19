@@ -1,0 +1,29 @@
+name: Back-merge from main
+description: Open or refresh PRs from main into development and open release/* branches. Never auto-merges.
+
+inputs:
+  github-token:
+    description: Token with pull-requests:write on the caller repo
+    required: true
+  repository:
+    description: owner/name of the caller repo
+    required: true
+  sha:
+    description: main tip SHA that triggered the back-merge
+    required: true
+  label:
+    description: Label applied to back-merge PRs
+    required: false
+    default: backmerge
+
+runs:
+  using: composite
+  steps:
+    - name: Create or refresh back-merge PRs
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ inputs.repository }}
+        SHA: ${{ inputs.sha }}
+        BACKMERGE_LABEL: ${{ inputs.label }}
+      run: bash "${{ github.action_path }}/backmerge-from-main.sh"

@@ -1,0 +1,62 @@
+name: Back-merge notify
+description: Comment (and optionally notify Teams) when back-merge PRs are conflicted or stale.
+
+inputs:
+  github-token:
+    description: Token with pull-requests:write on the caller repo
+    required: true
+  repository:
+    description: owner/name of the caller repo
+    required: true
+  event-name:
+    description: GitHub event name (schedule, pull_request, workflow_dispatch)
+    required: false
+    default: schedule
+  pr-number:
+    description: PR number when event is pull_request
+    required: false
+    default: ""
+  stale-hours:
+    description: Hours open before a non-conflicting back-merge PR is stale
+    required: false
+    default: "24"
+  label:
+    description: Label that identifies back-merge PRs
+    required: false
+    default: backmerge
+  teams-webhook:
+    description: Teams Incoming Webhook URL (optional)
+    required: false
+    default: ""
+
+outputs:
+  count:
+    description: Number of PRs needing attention
+    value: ${{ steps.find.outputs.count }}
+  rows:
+    description: Tab-separated rows of PRs needing attention
+    value: ${{ steps.find.outputs.rows }}
+
+runs:
+  using: composite
+  steps:
+    - name: Find back-merge PRs that need attention
+      id: find
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ inputs.repository }}
+        EVENT_NAME: ${{ inputs.event-name }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        STALE_HOURS: ${{ inputs.stale-hours }}
+        BACKMERGE_LABEL: ${{ inputs.label }}
+      run: bash "${{ github.action_path }}/find-and-comment.sh"
+
+    - name: Notify Teams
+      if: steps.find.outputs.count != '0'
+      shell: bash
+      env:
+        WEBHOOK: ${{ inputs.teams-webhook }}
+        ROWS: ${{ steps.find.outputs.rows }}
+        REPO: ${{ inputs.repository }}
+      run: bash "${{ github.action_path }}/notify-teams.sh"
