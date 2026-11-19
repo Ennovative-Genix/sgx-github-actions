@@ -1,0 +1,102 @@
+fullnameOverride: teampulseserver
+replicaCount: 1
+revisionHistoryLimit: 2
+containerPort: 3000
+envFrom:
+  secret: teampulseserver-secret
+  configMap: teampulseserver-config
+configMap:
+  enabled: true
+  data:
+    NODE_ENV: "dev"
+    PORT: "3000"
+    APP_CONTEXT: "teampulse"
+    REST_ROUTE: "api"
+    GRAPHQL_ROUTE: "graphql"
+    DB_PORT: "5432"
+    DB_SSL: "true"
+    DEFAULT_USER_ROLE: "user"
+    FORGOT_PASSWORD_EXPIRE_HOURS: "4"
+    HOURS_TO_BLOCK: "6"
+    HOURS_TO_VERIFY: "4"
+    JWT_EXPIRATION: "30m"
+    LOGIN_ATTEMPTS_TO_BLOCK: "3"
+    SALT_HASH_ROUNDS: "10"
+    SMTP_PORT: "587"
+    SMTP_SECURE: "false"
+    SUPER_ADMIN_ROLE: "admin"
+service:
+  type: ClusterIP
+  port: 3000
+ingress:
+  path: /api/teampulse
+  pathType: Prefix
+  alb:
+    groupOrder: "9"
+    rewrite:
+      enabled: true
+      regex: "^/api/teampulse/(.*)$"
+      replace: "/$1"
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: teampulseserver
+          topologyKey: kubernetes.io/hostname
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+readinessProbe:
+  httpGet:
+    path: /teampulse/health
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+livenessProbe:
+  httpGet:
+    path: /teampulse/health
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+startupProbe:
+  httpGet:
+    path: /teampulse/health
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 5
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

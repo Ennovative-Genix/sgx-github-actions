@@ -352,6 +352,8 @@ jobs:
           adopt ingress "$RELEASE"
           adopt hpa "$RELEASE"
           adopt pdb "$RELEASE"
+          # Chart ConfigMap defaults to <fullname>-config (e.g. teampulseserver-config).
+          adopt configmap "${RELEASE}-config"
 
       - name: Helm upgrade
         env:
