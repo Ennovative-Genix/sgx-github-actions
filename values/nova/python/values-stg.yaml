@@ -1,0 +1,4 @@
+replicaCount: 1
+ingress:
+  alb:
+    groupOrder: 7

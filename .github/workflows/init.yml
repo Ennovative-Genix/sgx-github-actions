@@ -232,8 +232,13 @@ jobs:
           CODEARTIFACT_DOMAIN_OWNER="$(trim "$CODEARTIFACT_DOMAIN_OWNER")"
           CODEARTIFACT_REGION="$(trim "$CODEARTIFACT_REGION")"
 
+          # Callers may pass "staging"; Helm env/values files use the short key "stg".
+          if [ "$ENVIRONMENT" = "staging" ]; then
+            ENVIRONMENT=stg
+          fi
+
           case "$ENVIRONMENT" in
-            dev|qa|uat|stg|staging|preprod|prod) ;;
+            dev|qa|uat|stg|preprod|prod) ;;
             *) fail "environment must be one of dev|qa|uat|stg|staging|preprod|prod (got '$ENVIRONMENT')" ;;
           esac
 
